@@ -15,30 +15,44 @@ app.listen(port, () => console.log(`🌐 Web Server rodando na porta ${port} (Ob
 // -----------------------------------------------------------
 
 
-console.log('🔄 Iniciando Sistema de Segurança...');
+console.log('🔄 INICIANDO SISTEMA DE SEGURANÇA...');
 
 // ⚙️ CONFIGURAÇÃO CENTRAL
 const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI', 
-    LOG_CHANNEL: '1445105097796223078',
+    LOG_CHANNEL: 'ID_DO_CANAL_DE_LOGS',
     MIN_AGE_DAYS: 7,
     AUTO_KICK: false
 };
+
+// --- PREVENÇÃO DE CRASH SILENCIOSO ---
+process.on('uncaughtException', (error) => {
+    console.error('❌ ERRO FATAL (O bot vai desligar):', error);
+    if (error.message.includes('Privileged Intent') || error.message.includes('DisallowedIntents')) {
+        console.error('\n\n⚠️ CAUSA PROVÁVEL: VOCÊ NÃO ATIVOU AS "INTENTS" NO SITE DO DISCORD!');
+        console.error('👉 Vá em discord.com/developers -> Seu Bot -> Aba Bot -> Ligue "Privileged Gateway Intents" (Presence, Server Members, Message Content).\n\n');
+    }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ ERRO EM PROMESSA NÃO TRATADA:', reason);
+});
+// -------------------------------------
 
 // --- AUTO-DIAGNÓSTICO DE INICIALIZAÇÃO ---
 if (CONFIG.TOKEN === 'SEU_TOKEN_AQUI' && !process.env.DISCORD_TOKEN) {
     console.error('❌ ERRO CRÍTICO: Token do Bot não encontrado!');
     console.error('DICA: No painel do Render, vá em "Environment" e adicione a variável DISCORD_TOKEN com o token do seu bot.');
-    process.exit(1); // Encerra com erro para o Render mostrar vermelho
+    process.exit(1);
 }
 // ----------------------------------------
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // CRUCIAL
+        GatewayIntentBits.GuildMembers, // CRUCIAL: Requer "Server Members Intent" ativado no portal
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent // CRUCIAL: Requer "Message Content Intent" ativado no portal
     ],
     partials: [Partials.GuildMember, Partials.User]
 });
@@ -87,22 +101,17 @@ client.on(Events.GuildMemberAdd, async member => {
             .addFields(
                 { 
                     name: '🆔 Identificação (ID)', 
-                    value: ```yaml
-${member.id}
-```, 
+                    value: `\`\`\`yaml\n${member.id}\n\`\`\``, 
                     inline: true 
                 },
                 { 
                     name: '🤖 Tipo', 
-                    value: ```fix
-${member.user.bot ? 'BOT' : 'HUMANO'}
-```, 
+                    value: `\`\`\`fix\n${member.user.bot ? 'BOT' : 'HUMANO'}\n\`\`\``, 
                     inline: true 
                 },
                 { 
                     name: '⏳ Idade da Conta', 
-                    value: `**${diffDays} dias**
-${createProgressBar(diffDays, 30)}`, 
+                    value: `**${diffDays} dias**\n${createProgressBar(diffDays, 30)}`, 
                     inline: false 
                 },
                 { 
@@ -211,7 +220,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x5865F2)
                 .setTitle(`📁 Dossiê: ${targetUser.tag}`)
                 .setDescription(`
-                **ID:** `${targetUser.id}`
+                **ID:** \`${targetUser.id}\`
                 **Bot:** ${targetUser.bot ? 'Sim' : 'Não'}
                 **Conta Criada:** <t:${Math.floor(created.getTime()/1000)}:R>
                 **Entrou no Server:** ${joined ? `<t:${Math.floor(joined.getTime()/1000)}:R>` : 'Não está mais no servidor'}
@@ -233,10 +242,6 @@ client.on(Events.MessageCreate, async message => {
 });
 
 client.login(CONFIG.TOKEN).catch(error => {
-    console.error('❌ FALHA NO LOGIN:');
+    console.error('❌ FALHA NO LOGIN (Verifique o Token):');
     console.error(error);
-    console.log('---------------------------------------------------');
-    console.log('💡 DICA: Verifique se o TOKEN está correto no Render (Environment Variables).');
-    console.log('💡 DICA: Verifique se as PRIVILEGED INTENTS estão ativadas no Discord Developer Portal.');
-    console.log('---------------------------------------------------');
 });
