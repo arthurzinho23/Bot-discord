@@ -1,4 +1,15 @@
-const { Client, GatewayIntentBits, Events, EmbedBuilder, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    Events, 
+    EmbedBuilder, 
+    Partials, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    PermissionFlagsBits,
+    AuditLogEvent 
+} = require('discord.js');
 
 // --- CONFIGURAÇÃO PARA RENDER/REPLIT (Mantém o bot vivo) ---
 const express = require('express');
@@ -11,55 +22,47 @@ app.get('/', (req, res) => res.send({
     timestamp: new Date().toISOString()
 }));
 
-app.listen(port, () => console.log(`🌐 Web Server rodando na porta ${port} (Obrigatório para o Render)`));
+app.listen(port, () => console.log(`🌐 Web Server rodando na porta ${port}`));
 // -----------------------------------------------------------
-
 
 console.log('🔄 INICIANDO SISTEMA DE SEGURANÇA...');
 
-// ⚙️ CONFIGURAÇÃO CENTRAL
+// ⚙️ CONFIGURAÇÃO CENTRAL (EDITAR AQUI)
 const CONFIG = {
+    // Se estiver no Replit/Render, use process.env.DISCORD_TOKEN. Se for PC local, coloque o token entre aspas.
     TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI', 
-    LOG_CHANNEL: '1445105097796223078',
-    MIN_AGE_DAYS: 7,
-    AUTO_KICK: false
+    
+    // Canal onde avisa que alguém ENTROU
+    JOIN_LOG_CHANNEL: '1445105097796223078', 
+    
+    // Canal onde avisa que alguém SAIU (Pode ser o mesmo do de cima se quiser)
+    LEAVE_LOG_CHANNEL: '1445105144869032129', 
+
+    MIN_AGE_DAYS: 7, // Dias mínimos para conta não ser suspeita
+    AUTO_KICK: false // Se true, expulsa contas novas automaticamente
 };
 
-// --- PREVENÇÃO DE CRASH SILENCIOSO ---
+// --- PREVENÇÃO DE CRASH ---
 process.on('uncaughtException', (error) => {
-    console.error('❌ ERRO FATAL (O bot vai desligar):', error);
-    if (error.message.includes('Privileged Intent') || error.message.includes('DisallowedIntents')) {
-        console.error('\n\n⚠️ CAUSA PROVÁVEL: VOCÊ NÃO ATIVOU AS "INTENTS" NO SITE DO DISCORD!');
-        console.error('👉 Vá em discord.com/developers -> Seu Bot -> Aba Bot -> Ligue "Privileged Gateway Intents" (Presence, Server Members, Message Content).\n\n');
-    }
+    console.error('❌ ERRO FATAL:', error);
 });
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ ERRO EM PROMESSA NÃO TRATADA:', reason);
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ ERRO EM PROMESSA:', reason);
 });
-// -------------------------------------
-
-// --- AUTO-DIAGNÓSTICO DE INICIALIZAÇÃO ---
-if (CONFIG.TOKEN === 'SEU_TOKEN_AQUI' && !process.env.DISCORD_TOKEN) {
-    console.error('❌ ERRO CRÍTICO: Token do Bot não encontrado!');
-    console.error('DICA: No painel do Render, vá em "Environment" e adicione a variável DISCORD_TOKEN com o token do seu bot.');
-    process.exit(1);
-}
-// ----------------------------------------
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, 
+        GatewayIntentBits.GuildMembers, // OBRIGATÓRIO ATIVAR NO DEV PORTAL
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent 
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildModeration // Necessário para ler Audit Logs
     ],
     partials: [Partials.GuildMember, Partials.User]
 });
 
 client.once(Events.ClientReady, c => {
     console.log(`✅ SISTEMA OPERACIONAL: ${c.user.tag}`);
-    console.log(`🛡️ Monitorando entradas no servidor...`);
     client.user.setActivity('🛡️ Monitorando Perímetro');
 });
 
@@ -92,9 +95,7 @@ client.on(Events.GuildMemberAdd, async member => {
                 iconURL: member.user.displayAvatarURL({ dynamic: true }) 
             })
             .setTitle(title)
-            .setDescription(`> ${aiMessage}
-
-**📋 Análise Técnica:**`)
+            .setDescription(`> ${aiMessage}\n\n**📋 Análise Técnica:**`)
             .addFields(
                 { name: '🆔 Identificação (ID)', value: `\`\`\`yaml\n${member.id}\n\`\`\``, inline: true },
                 { name: '🤖 Tipo', value: `\`\`\`fix\n${member.user.bot ? 'BOT' : 'HUMANO'}\n\`\`\``, inline: true },
@@ -109,10 +110,10 @@ client.on(Events.GuildMemberAdd, async member => {
             .addComponents(
                 new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('EXPULSAR').setEmoji('🥾').setStyle(ButtonStyle.Danger),
                 new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('BANIR AGENTE').setEmoji('🔨').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`info_${member.id}`).setLabel('RELATÓRIO COMPLETO').setEmoji('📄').setStyle(ButtonStyle.Secondary)
+                new ButtonBuilder().setCustomId(`info_${member.id}`).setLabel('RELATÓRIO').setEmoji('📄').setStyle(ButtonStyle.Secondary)
             );
 
-        const channel = member.guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+        const channel = member.guild.channels.cache.get(CONFIG.JOIN_LOG_CHANNEL);
 
         if (channel && channel.isTextBased()) {
             await channel.send({ 
@@ -132,61 +133,73 @@ client.on(Events.GuildMemberAdd, async member => {
     }
 });
 
-// 🏃 SAÍDA DO MEMBRO — COM DETECÇÃO DE SAIR / KICK / BAN + CANAL NOVO
+// 🏃 SAÍDA DO MEMBRO — CORRIGIDO
 client.on(Events.GuildMemberRemove, async member => {
-    const logChannel = member.guild.channels.cache.get('1445105144869032129');
+    const logChannel = member.guild.channels.cache.get(CONFIG.LEAVE_LOG_CHANNEL);
     if (!logChannel || !logChannel.isTextBased()) return;
 
+    let action = 'Saiu por conta própria';
+    let executor = null;
+    let color = 0xFEE75C; // Amarelo padrão para saída
+
     try {
-        const logs = await member.guild.fetchAuditLogs({
+        // Busca logs de Kick
+        const kickLogs = await member.guild.fetchAuditLogs({
             limit: 1,
-            type: ['MEMBER_KICK', 'MEMBER_BAN_ADD']
+            type: AuditLogEvent.MemberKick,
         });
+        const kickLog = kickLogs.entries.first();
 
-        const audit = logs.entries.first();
-        let action = 'Saiu do servidor';
-        let color = 0x2F3136;
+        // Busca logs de Ban
+        const banLogs = await member.guild.fetchAuditLogs({
+            limit: 1,
+            type: AuditLogEvent.MemberBanAdd,
+        });
+        const banLog = banLogs.entries.first();
 
-        if (audit) {
-            const { executor, target } = audit;
-
-            if (audit.action === 20 && target.id === member.id) {
-                action = `Expulso por **${executor.tag}**`;
-                color = 0xED4245;
-            }
-
-            if (audit.action === 22 && target.id === member.id) {
-                action = `Banido por **${executor.tag}**`;
-                color = 0x000000;
-            }
+        // Verifica se foi Ban
+        if (banLog && banLog.target.id === member.id && banLog.createdTimestamp > (Date.now() - 5000)) {
+            action = '🔴 BANIDO';
+            executor = banLog.executor;
+            color = 0x000000;
+        } 
+        // Verifica se foi Kick (se não foi ban)
+        else if (kickLog && kickLog.target.id === member.id && kickLog.createdTimestamp > (Date.now() - 5000)) {
+            action = '🟠 EXPULSO (Kick)';
+            executor = kickLog.executor;
+            color = 0xED4245;
         }
 
         const embed = new EmbedBuilder()
             .setColor(color)
             .setAuthor({
-                name: `${member.user.tag} saiu`,
+                name: `${member.user.tag} saiu do servidor`,
                 iconURL: member.user.displayAvatarURL({ dynamic: true })
             })
             .setDescription(`
-👤 **Usuário:** <@${member.id}>
-📝 **Ação:** ${action}
+👤 **Usuário:** ${member.user} (\`${member.id}\`)
+📝 **Ação Detectada:** ${action}
+${executor ? `👮 **Executor:** ${executor} (\`${executor.tag}\`)` : ''}
             `)
-            .setFooter({ text: `ID: ${member.id}` })
+            .setThumbnail(member.user.displayAvatarURL())
+            .setFooter({ text: `ID: ${member.id} • Membros restantes: ${member.guild.memberCount}` })
             .setTimestamp();
 
         logChannel.send({ embeds: [embed] });
 
     } catch (e) {
-        console.log('Erro ao processar saída:', e);
+        console.error('Erro ao processar saída:', e);
+        // Envia log simples se falhar na auditoria
+        logChannel.send(`📤 **${member.user.tag}** saiu do servidor (Erro ao verificar auditoria).`);
     }
 });
 
-// 🎮 CONTROLE DE INTERAÇÕES
+// 🎮 CONTROLE DE INTERAÇÕES (Botões)
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
     if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        return interaction.reply({ content: '⛔ **ACESSO NEGADO.**', ephemeral: true });
+        return interaction.reply({ content: '⛔ **Você não tem permissão para usar isso.**', ephemeral: true });
     }
 
     const [action, targetId] = interaction.customId.split('_');
@@ -196,21 +209,21 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
         targetUser = await client.users.fetch(targetId);
     } catch {
-        return interaction.reply({ content: '❌ ID inválido.', ephemeral: true });
+        return interaction.reply({ content: '❌ Usuário não encontrado (ID inválido).', ephemeral: true });
     }
 
     const targetMember = guild.members.cache.get(targetId);
 
     try {
         if (action === 'kick') {
-            if (!targetMember) return interaction.reply({ content: '❌ Já saiu.', ephemeral: true });
-            await targetMember.kick(`Operação manual por ${interaction.user.tag}`);
-            await interaction.reply({ content: `👢 **Expulso:** ${targetUser.tag}` });
+            if (!targetMember) return interaction.reply({ content: '❌ O usuário já saiu do servidor.', ephemeral: true });
+            await targetMember.kick(`Operação manual via Bot por ${interaction.user.tag}`);
+            await interaction.reply({ content: `👢 **Sucesso:** ${targetUser.tag} foi expulso.` });
         }
 
         if (action === 'ban') {
-            await guild.members.ban(targetId, { reason: `Ban manual por ${interaction.user.tag}` });
-            await interaction.reply({ content: `🔨 **Banido:** ${targetUser.tag}` });
+            await guild.members.ban(targetId, { reason: `Ban manual via Bot por ${interaction.user.tag}` });
+            await interaction.reply({ content: `🔨 **Sucesso:** ${targetUser.tag} foi banido.` });
         }
 
         if (action === 'info') {
@@ -221,10 +234,10 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setColor(0x5865F2)
                 .setTitle(`📁 Dossiê: ${targetUser.tag}`)
                 .setDescription(`
-ID: \`${targetUser.id}\`
-Bot: ${targetUser.bot ? 'Sim' : 'Não'}
-Conta Criada: <t:${Math.floor(created.getTime()/1000)}:R>
-Entrou no Server: ${joined ? `<t:${Math.floor(joined.getTime()/1000)}:R>` : 'Saiu'}
+**ID:** \`${targetUser.id}\`
+**Bot:** ${targetUser.bot ? 'Sim' : 'Não'}
+**Criado em:** <t:${Math.floor(created.getTime()/1000)}:F>
+**Entrou em:** ${joined ? `<t:${Math.floor(joined.getTime()/1000)}:F>` : 'Não está no servidor'}
                 `);
 
             await interaction.reply({ embeds: [infoEmbed], ephemeral: true });
@@ -232,18 +245,10 @@ Entrou no Server: ${joined ? `<t:${Math.floor(joined.getTime()/1000)}:R>` : 'Sai
 
     } catch (error) {
         console.error(error);
-        await interaction.reply({ content: `❌ **Erro:** Verifique perms.`, ephemeral: true });
-    }
-});
-
-// EXTRAS
-client.on(Events.MessageCreate, async message => {
-    if(message.content === '!lockdown' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-        message.channel.send('🚧 **MODO LOCKDOWN ATIVADO (Simulação)** 🚧');
+        await interaction.reply({ content: `❌ **Erro:** Verifique se o bot tem permissão (o cargo dele deve estar acima do alvo).`, ephemeral: true });
     }
 });
 
 client.login(CONFIG.TOKEN).catch(err => {
-    console.error('❌ FALHA NO LOGIN:');
-    console.error(err);
+    console.error('❌ FALHA NO LOGIN: Verifique o Token no arquivo ou nas variáveis de ambiente.');
 });
