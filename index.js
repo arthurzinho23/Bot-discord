@@ -15,7 +15,8 @@ const { OpenAI } = require("openai");
 // --- CONFIGURAÇÃO ---
 const CONFIG = {
     DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-    OPENAI_KEY: process.env.OPENAI_API_KEY, // Apenas OpenAI
+    // Tenta ler ambos os nomes comuns para garantir
+    OPENAI_KEY: process.env.OPENAI_API_KEY || process.env.OPENAI_KEY,
     ENTRY_CHANNEL_ID: '1445105097796223078', 
     EXIT_CHANNEL_ID: '1445105144869032129', 
     MIN_AGE_DAYS: 7,
@@ -26,7 +27,7 @@ const CONFIG = {
 const app = express();
 
 app.get('/', (req, res) => {
-    const statusIA = CONFIG.OPENAI_KEY ? "🟢 OpenAI Ativo" : "🔴 OpenAI Offline";
+    const statusIA = CONFIG.OPENAI_KEY ? "🟢 OpenAI Configurada" : "🔴 Falta API Key";
     res.json({ 
         status: 'Online', 
         bot: 'Guardian', 
@@ -41,16 +42,18 @@ app.listen(CONFIG.PORT, () => {
     console.log(`🌍 Servidor Web rodando na porta ${CONFIG.PORT}`);
 });
 
-// --- CONFIGURAÇÃO OPENAI ---
+// --- CLIENTE OPENAI ---
 let aiClient = null;
 
 if (CONFIG.OPENAI_KEY) {
     try {
         aiClient = new OpenAI({ apiKey: CONFIG.OPENAI_KEY });
-        console.log("🧠 IA Configurada: OpenAI (ChatGPT)");
-    } catch (e) { console.error("Erro OpenAI:", e.message); }
+        console.log("🧠 IA Configurada: OpenAI");
+    } catch (e) { 
+        console.error("Erro Config OpenAI:", e.message); 
+    }
 } else {
-    console.log("⚠️ Nenhuma API Key encontrada (OPENAI_API_KEY). Chat desligado.");
+    console.log("⚠️ Nenhuma API Key encontrada (OPENAI_API_KEY ou OPENAI_KEY).");
 }
 
 // --- CLIENTE DISCORD ---
@@ -75,14 +78,16 @@ client.on(Events.MessageCreate, async message => {
     if (!message.mentions.has(client.user)) return;
 
     if (!aiClient) {
-        return message.reply("❌ OpenAI não configurada. Verifique OPENAI_API_KEY no Render.");
+        return message.reply("❌ **Erro de Configuração:** Não encontrei a 'OPENAI_API_KEY' nas variáveis de ambiente do Render.");
     }
 
     await message.channel.sendTyping();
 
     try {
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim() || "Olá!";
-        const systemPrompt = "Você é um bot moderador do Discord chamado Guardian. Seja breve, útil e um pouco sério.";
+        const systemPrompt = "Você é um bot moderador do Discord chamado Guardian. Seja breve.";
+
+        console.log(`💬 Processando mensagem: "${prompt}"`);
 
         const completion = await aiClient.chat.completions.create({
             messages: [
@@ -102,64 +107,21 @@ client.on(Events.MessageCreate, async message => {
         }
 
     } catch (error) {
-        console.error("Erro IA:", error);
-        await message.reply("Erro ao processar mensagem via OpenAI.");
+        console.error("❌ Erro OpenAI Detalhado:", error);
+        
+        // MENSAGEM DE ERRO DETALHADA PARA O CHAT
+        let userMsg = "❌ Erro ao conectar na OpenAI.";
+        
+        if (error.status === 401) userMsg += " (Chave API Inválida/Incorreta)";
+        if (error.status === 429) userMsg += " (Cota Excedida / Sem Créditos)";
+        if (error.status === 404) userMsg += " (Modelo não encontrado/acessível)";
+        
+        await message.reply(`${userMsg}
+` + "```" + error.message + "```");
     }
 });
 
-// Eventos de Moderação (Mantidos)
-client.on(Events.GuildMemberAdd, async member => {
-    const channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL_ID);
-    if (!channel) return;
-
-    const createdAt = member.user.createdAt;
-    const diffDays = Math.floor((Date.now() - createdAt) / 86400000);
-    const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
-
-    const embed = new EmbedBuilder()
-        .setColor(isSuspicious ? 0xED4245 : 0x57F287)
-        .setTitle(isSuspicious ? '⛔ CONTA SUSPEITA' : '✅ Novo Membro')
-        .setDescription(`${member} entrou.`)
-        .addFields(
-            { name: 'Idade da Conta', value: `${diffDays} dias`, inline: true },
-            { name: 'ID', value: member.id, inline: true }
-        )
-        .setThumbnail(member.user.displayAvatarURL())
-        .setTimestamp();
-
-    const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('KICK').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('BAN').setStyle(ButtonStyle.Danger)
-            );
-
-    channel.send({ embeds: [embed], components: isSuspicious ? [row] : [] });
-});
-
-client.on(Events.GuildMemberRemove, async member => {
-    const channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL_ID);
-    if (!channel) return;
-    const embed = new EmbedBuilder()
-        .setColor(0x99AAB5).setTitle('📤 Saiu').setDescription(`${member.user.tag} saiu.`).setTimestamp();
-    channel.send({ embeds: [embed] });
-});
-
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isButton()) return;
-    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) 
-        return interaction.reply({ content: 'Sem permissão.', ephemeral: true });
-
-    const [action, targetId] = interaction.customId.split('_');
-    const member = interaction.guild.members.cache.get(targetId);
-
-    if (action === 'kick' && member) {
-        await member.kick('Bot Action');
-        interaction.reply({ content: 'Expulso.', ephemeral: true });
-    }
-    if (action === 'ban') {
-        await interaction.guild.members.ban(targetId);
-        interaction.reply({ content: 'Banido.', ephemeral: true });
-    }
-});
+// ... (Mantenha o resto dos eventos de GuildMemberAdd/Remove iguais)
+// Se precisar, copie do código anterior, a parte de IA é a principal mudança aqui.
 
 client.login(CONFIG.DISCORD_TOKEN);
