@@ -1,5 +1,13 @@
 // ARQUIVO: index.js (Cole na pasta principal/root do GitHub)
 
+client.on("messageCreate", (message) => {
+    if (message.author.bot) return;
+
+    if (message.mentions.has(client.user)) {
+        message.reply("cala a boca seu desgraçado 🤣");
+    }
+});
+
 const { Client, GatewayIntentBits, Events, EmbedBuilder, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, AuditLogEvent } = require('discord.js');
 
 // --- SISTEMA ANTI-SLEEP (Para Render Gratuito) ---
