@@ -12,6 +12,7 @@ const {
 } = require('discord.js');
 
 const express = require('express');
+const https = require('https'); // Usar https nativo para compatibilidade
 const { GoogleGenAI } = require("@google/genai");
 
 // --- CONFIGURAÇÃO INICIAL ---
@@ -47,14 +48,16 @@ app.get('/ping', (req, res) => res.status(200).send('Pong!'));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Servidor Web rodando na porta ${CONFIG.PORT}`);
     
-    // Sistema Anti-Sleep (Ping automático)
+    // Sistema Anti-Sleep (Ping automático via HTTPS nativo)
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
     if (renderUrl) {
         console.log(`⏰ Anti-Sleep ativado para: ${renderUrl}`);
         setInterval(() => {
-            fetch(`${renderUrl}/ping`)
-                .then(() => console.log('💓 Heartbeat enviado'))
-                .catch(err => console.error('💔 Falha no Heartbeat:', err.message));
+            https.get(`${renderUrl}/ping`, (res) => {
+                console.log(`💓 Heartbeat enviado. Status: ${res.statusCode}`);
+            }).on('error', (e) => {
+                console.error(`💔 Falha no Heartbeat: ${e.message}`);
+            });
         }, 5 * 60 * 1000); // 5 minutos
     }
 });
@@ -150,8 +153,8 @@ client.on(Events.GuildMemberAdd, async member => {
             .setAuthor({ name: `${member.user.tag} entrou`, iconURL: member.user.displayAvatarURL() })
             .setTitle(isSuspicious ? '⛔ CONTA SUSPEITA' : '✅ Conta segura')
             .addFields(
-                { name: 'ID', value: ```yaml\n${member.id}\n```` },
-                { name: 'Bot?', value: ```${member.user.bot ? 'Sim' : 'Não'}```` },
+                { name: 'ID', value: ```yaml\n${member.id}\n``` },
+                { name: 'Bot?', value: ```${member.user.bot ? 'Sim' : 'Não'}``` },
                 { name: 'Idade da conta', value: `${diffDays} dias\n${createProgressBar(diffDays, 30)}` }
             )
             .setThumbnail(member.user.displayAvatarURL())
