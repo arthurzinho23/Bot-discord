@@ -1,45 +1,36 @@
 import { Client, GatewayIntentBits, Events, EmbedBuilder, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, AuditLogEvent } from 'discord.js';
 import express from 'express';
-
-// --- POLYFILL PARA AMBIENTE WEB ---
-// O 'process' não existe nativamente no navegador, então criamos um mock para evitar crash.
-if (typeof process === 'undefined') {
-    window.process = {
-        env: {
-            // Defina suas variáveis aqui se necessário ou use um .env
-            DISCORD_TOKEN: '', 
-            PORT: 3000,
-            RENDER_EXTERNAL_URL: ''
-        },
-        uptime: () => (performance.now() / 1000),
-        exit: (code) => console.error(`🛑 Processo encerrado com código: ${code}`),
-        on: (event, callback) => console.log(`📋 Evento de processo registrado: ${event}`),
-        // Mock de memoryUsage para bibliotecas que checam isso
-        memoryUsage: () => ({ heapUsed: 0, heapTotal: 0, rss: 0 })
-    };
-    
-    // Express mock básico se rodar no browser (Express não roda no browser)
-    if (typeof express !== 'function') {
-        // Se o import do express falhar ou retornar algo inesperado no bundle
-        console.warn("⚠️ Express não é suportado no navegador. O servidor web será simulado.");
-    }
-}
-// ----------------------------------
+import { GoogleGenAI } from "@google/genai";
 
 // --- SISTEMA ANTI-SLEEP (Para Render Gratuito) ---
-// Nota: Em ambiente web puro (browser), express() não iniciará um servidor real acessível externamente.
-const app = express();
+// Em ambiente web puro, express pode não ser uma função ou não funcionar.
+let app: any;
+try {
+    if (typeof express === 'function') {
+        app = express();
+    } else {
+        // Fallback mock se a importação do express falhar no browser
+        app = {
+            get: () => {},
+            listen: (port: any, cb: any) => { if(cb) cb(); return {}; }
+        };
+    }
+} catch (e) {
+    console.warn("Express failed to initialize, using mock.");
+    app = { get: () => {}, listen: (p: any, c: any) => c && c() };
+}
+
 const port = process.env.PORT || 3000;
 
 // Rota de monitoramento
-app.get('/', (req, res) => res.send({ 
+app.get('/', (req: any, res: any) => res.send({ 
     status: '🛡️ Guardian Online', 
-    uptime: process.uptime(),
+    uptime: (process as any).uptime(),
     timestamp: new Date().toISOString()
 }));
 
 // Rota para o Auto-Ping
-app.get('/ping', (req, res) => res.status(200).send('Pong!'));
+app.get('/ping', (req: any, res: any) => res.status(200).send('Pong!'));
 
 // Verificação de ambiente antes de tentar ouvir porta
 if (app.listen) {
@@ -67,7 +58,8 @@ console.log('🔄 INICIANDO SISTEMA DE SEGURANÇA...');
 
 // ⚙️ CONFIGURAÇÃO CENTRAL
 const CONFIG = {
-    TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI', 
+    TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI',
+    GEMINI_KEY: process.env.GEMINI_API_KEY, 
     ENTRY_CHANNEL: '1445105097796223078', // Canal de Entrada e Alertas
     EXIT_CHANNEL: '1445105144869032129',  // Canal de Saída
     MIN_AGE_DAYS: 7,
@@ -75,7 +67,7 @@ const CONFIG = {
 };
 
 // --- PREVENÇÃO DE CRASH SILENCIOSO ---
-process.on('uncaughtException', (error) => {
+(process as any).on('uncaughtException', (error: any) => {
     console.error('❌ ERRO FATAL (O bot vai desligar):', error);
     if (error && error.message && (error.message.includes('Privileged Intent') || error.message.includes('DisallowedIntents'))) {
         console.error('\n\n⚠️ CAUSA PROVÁVEL: VOCÊ NÃO ATIVOU AS "INTENTS" NO SITE DO DISCORD!');
@@ -83,7 +75,7 @@ process.on('uncaughtException', (error) => {
     }
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+(process as any).on('unhandledRejection', (reason: any, promise: any) => {
     console.error('❌ ERRO EM PROMESSA NÃO TRATADA:', reason);
 });
 // -------------------------------------
@@ -92,14 +84,21 @@ process.on('unhandledRejection', (reason, promise) => {
 if (CONFIG.TOKEN === 'SEU_TOKEN_AQUI' && !process.env.DISCORD_TOKEN) {
     console.error('❌ ERRO CRÍTICO: Token do Bot não encontrado!');
     console.error('DICA: No painel do Render, vá em "Environment" e adicione a variável DISCORD_TOKEN com o token do seu bot.');
-    // No browser, process.exit não para a execução, então retornamos
-    if (typeof window !== 'undefined') {
-       console.warn("⚠️ Execução interrompida simulada.");
-    } else {
-       process.exit(1);
-    }
+    if (typeof window === 'undefined') (process as any).exit(1);
+}
+
+if (!CONFIG.GEMINI_KEY) {
+    console.warn('⚠️ AVISO: GEMINI_API_KEY não encontrada. O chat por IA não funcionará.');
+} else {
+    console.log('🧠 IA Gemini Configurada.');
 }
 // ----------------------------------------
+
+// Inicialização da IA
+let aiClient: GoogleGenAI | undefined;
+if (CONFIG.GEMINI_KEY) {
+    aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
+}
 
 const client = new Client({
     intents: [
@@ -112,12 +111,54 @@ const client = new Client({
     partials: [Partials.GuildMember, Partials.User]
 });
 
-// --- EVENTO MOVIDO PARA CÁ (Para funcionar corretamente) ---
-client.on("messageCreate", (message) => {
+// --- SISTEMA DE CHAT COM IA (Substituindo o xingamento) ---
+client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    if (message.mentions.has(client.user)) {
-        message.reply("cala a boca seu desgraçado 🤣");
+    // Se o bot for mencionado
+    if (message.mentions.has(client.user!)) {
+        // Verifica se a chave da API existe
+        if (!aiClient) {
+            return message.reply("❌ Minha IA não está configurada (Falta GEMINI_API_KEY).");
+        }
+
+        // Feedback visual (Digitando...)
+        await message.channel.sendTyping();
+
+        try {
+            // Limpa a menção do texto para enviar apenas a pergunta para a IA
+            const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
+
+            if (!prompt) {
+                return message.reply("Olá! Como posso ajudar você hoje?");
+            }
+
+            // Chama a API do Gemini
+            const response = await aiClient.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: {
+                    // Configuração opcional de personalidade
+                    systemInstruction: "Você é um assistente útil, inteligente e protetor de um servidor do Discord. Suas respostas devem ser curtas e diretas.",
+                }
+            });
+
+            const textResponse = response.text || "";
+
+            // O Discord tem limite de 2000 caracteres. Se a resposta for longa, dividimos.
+            if (textResponse.length > 2000) {
+                const chunks = textResponse.match(/[\s\S]{1,1900}/g) || [];
+                for (const chunk of chunks) {
+                    await message.reply(chunk);
+                }
+            } else {
+                await message.reply(textResponse);
+            }
+
+        } catch (error) {
+            console.error("Erro na IA:", error);
+            message.reply("Desculpe, tive um problema ao processar seu pensamento. Tente novamente.");
+        }
     }
 });
 // -----------------------------------------------------------
@@ -134,7 +175,7 @@ client.on(Events.ShardReconnecting, () => console.log('🔄 Reconectando ao Disc
 client.on(Events.ShardResume, () => console.log('✅ Conexão recuperada!'));
 
 // --- FUNÇÃO AUXILIAR DE ESTILO ---
-const createProgressBar = (days, minDays) => {
+const createProgressBar = (days: number, minDays: number) => {
     const percentage = Math.min(days / minDays, 1);
     const bars = 10;
     const filled = Math.floor(percentage * bars);
@@ -147,7 +188,7 @@ client.on(Events.GuildMemberAdd, async member => {
     try {
         const createdAt = member.user.createdAt;
         const now = new Date();
-        const diffDays = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
+        const diffDays = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
         
         const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
         
@@ -162,7 +203,7 @@ client.on(Events.GuildMemberAdd, async member => {
             .setColor(color)
             .setAuthor({ 
                 name: `${member.user.tag} entrou no servidor`, 
-                iconURL: member.user.displayAvatarURL({ dynamic: true }) 
+                iconURL: member.user.displayAvatarURL({ forceStatic: false }) 
             })
             .setTitle(title)
             .setDescription(`> ${aiMessage}\n\n**📋 Análise Técnica:**`)
@@ -189,11 +230,11 @@ client.on(Events.GuildMemberAdd, async member => {
                 }
             )
             .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
-            .setFooter({ text: `Security System v2.0 • ${new Date().toLocaleTimeString()}`, iconURL: client.user.displayAvatarURL() })
+            .setFooter({ text: `Security System v2.0 • ${new Date().toLocaleTimeString()}`, iconURL: client.user!.displayAvatarURL() })
             .setTimestamp();
 
         // Botões Táticos
-        const row = new ActionRowBuilder()
+        const row = new ActionRowBuilder<ButtonBuilder>()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`kick_${member.id}`)
@@ -227,7 +268,7 @@ client.on(Events.GuildMemberAdd, async member => {
         // Auto-Kick Lógica
         if (CONFIG.AUTO_KICK && isSuspicious) {
             await member.kick('🛡️ Auto-Defense: Conta muito recente.');
-            if(channel) await channel.send(`🤖 **AUTO-DEFESA:** O alvo ${member.user.tag} foi neutralizado (Kick) automaticamente.`);
+            if(channel && channel.isTextBased()) await channel.send(`🤖 **AUTO-DEFESA:** O alvo ${member.user.tag} foi neutralizado (Kick) automaticamente.`);
         }
 
     } catch (error) {
@@ -244,7 +285,7 @@ client.on(Events.GuildMemberRemove, async member => {
         let reason = '🚪 Saiu por conta própria';
         let color = 0x99AAB5; // Cinza (Padrão)
         let icon = '📤';
-        let executor = null;
+        let executor: any = null;
 
         try {
             // Tenta buscar nos logs de auditoria se foi Kick ou Ban recente (últimos 5 segundos)
@@ -255,7 +296,7 @@ client.on(Events.GuildMemberRemove, async member => {
 
             // Verifica se existe log e se foi criado agora pouco (margem de 5s) e se o alvo é quem saiu
             if (firstEntry && 
-                firstEntry.target.id === member.id && 
+                firstEntry.target && firstEntry.target.id === member.id && 
                 (Date.now() - firstEntry.createdTimestamp) < 5000) {
                 
                 if (firstEntry.action === AuditLogEvent.MemberKick) {
@@ -299,12 +340,14 @@ client.on(Events.GuildMemberRemove, async member => {
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
-    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
+    if (!interaction.member || typeof interaction.member.permissions === 'string' || !interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
         return interaction.reply({ content: '⛔ **ACESSO NEGADO.** Você não tem credenciais para esta operação.', ephemeral: true });
     }
 
     const [action, targetId] = interaction.customId.split('_');
     const guild = interaction.guild;
+    if (!guild) return;
+
     const logChannel = guild.channels.cache.get(CONFIG.ENTRY_CHANNEL); // Logs de auditoria vão para o canal de Segurança
     
     // Tenta buscar o membro mesmo se já saiu (pelo ID)
@@ -384,7 +427,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
 // 💡 COMANDO EXTRA: !lockdown (Simulação)
 client.on(Events.MessageCreate, async message => {
-    if(message.content === '!lockdown' && message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+    if(message.content === '!lockdown' && message.member?.permissions.has(PermissionFlagsBits.Administrator)) {
         message.channel.send('🚧 **MODO LOCKDOWN ATIVADO (Simulação)** 🚧\nNeste modo, o bot poderia fechar canais.');
     }
 });
