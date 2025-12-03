@@ -14,77 +14,65 @@ const {
 const express = require('express');
 const { GoogleGenAI } = require("@google/genai");
 
-// --- SISTEMA ANTI-SLEEP ---
-let app;
-try {
-    if (typeof express === 'function') {
-        app = express();
-    } else {
-        app = {
-            get: () => {},
-            listen: (port, cb) => { if(cb) cb(); return {}; }
-        };
-    }
-} catch (e) {
-    console.warn("Express failed to initialize, using mock.");
-    app = { get: () => {}, listen: (p, c) => c && c() };
-}
-
-const port = process.env.PORT || 3000;
-
-app.get('/', (req, res) => res.send({ 
-    status: '🛡️ Guardian Online', 
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-}));
-
-app.get('/ping', (req, res) => res.status(200).send('Pong!'));
-
-if (app.listen) {
-    app.listen(port, () => {
-        console.log(`🌐 Web Server rodando na porta ${port}`);
-
-        const renderUrl = process.env.RENDER_EXTERNAL_URL;
-        if (renderUrl) {
-            console.log('⏰ Sistema Anti-Sleep ativado: ' + renderUrl);
-            setInterval(() => {
-                fetch(renderUrl + '/ping')
-                    .then(() => console.log('💓 Heartbeat: ping ok'))
-                    .catch(err => console.error('💔 Heartbeat Falhou:', err.message));
-            }, 5 * 60 * 1000);
-        }
-    });
-} else {
-    console.warn("⚠️ Servidor Express não iniciado (ambiente não suportado).");
-}
-
-console.log('🔄 INICIANDO SISTEMA DE SEGURANÇA...');
-
+// --- CONFIGURAÇÃO INICIAL ---
 const CONFIG = {
-    TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI',
+    TOKEN: process.env.DISCORD_TOKEN,
     GEMINI_KEY: process.env.GEMINI_API_KEY, 
     ENTRY_CHANNEL: '1445105097796223078',
     EXIT_CHANNEL: '1445105144869032129',
     MIN_AGE_DAYS: 7,
-    AUTO_KICK: false
+    AUTO_KICK: false,
+    PORT: process.env.PORT || 3000
 };
 
-process.on('uncaughtException', (error) => {
-    console.error('❌ ERRO FATAL:', error);
-});
-process.on('unhandledRejection', (reason) => {
-    console.error('❌ ERRO PROMESSA:', reason);
-});
-
-if (CONFIG.TOKEN === 'SEU_TOKEN_AQUI' && !process.env.DISCORD_TOKEN) {
-    console.error('❌ Token do bot não encontrado!');
+// Validação de Token
+if (!CONFIG.TOKEN || CONFIG.TOKEN === 'SEU_TOKEN_AQUI') {
+    console.error('❌ ERRO CRÍTICO: Token do Discord não configurado nas Variáveis de Ambiente.');
     process.exit(1);
 }
 
+// --- SERVIDOR WEB (Necessário para o Render não desligar o bot) ---
+const app = express();
+
+app.get('/', (req, res) => {
+    res.send({ 
+        status: '🛡️ Guardian Online', 
+        uptime: process.uptime(),
+        date: new Date().toISOString()
+    });
+});
+
+app.get('/ping', (req, res) => res.status(200).send('Pong!'));
+
+app.listen(CONFIG.PORT, () => {
+    console.log(`🌐 Servidor Web rodando na porta ${CONFIG.PORT}`);
+    
+    // Sistema Anti-Sleep (Ping automático)
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl) {
+        console.log(`⏰ Anti-Sleep ativado para: ${renderUrl}`);
+        setInterval(() => {
+            // Requer Node 18+ para usar fetch nativo
+            fetch(`${renderUrl}/ping`)
+                .then(() => console.log('💓 Heartbeat enviado'))
+                .catch(err => console.error('💔 Falha no Heartbeat:', err.message));
+        }, 5 * 60 * 1000); // 5 minutos
+    }
+});
+
+// --- CLIENTE DISCORD & IA ---
+console.log('🔄 INICIANDO CLIENTE DISCORD...');
+
 let aiClient;
 if (CONFIG.GEMINI_KEY) {
-    aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
-    console.log('🧠 IA Gemini Configurada.');
+    try {
+        aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
+        console.log('🧠 IA Gemini Conectada.');
+    } catch (err) {
+        console.error('⚠️ Erro ao configurar Gemini:', err.message);
+    }
+} else {
+    console.warn('⚠️ GEMINI_API_KEY não encontrada. Funcionalidades de IA desativadas.');
 }
 
 const client = new Client({
@@ -98,12 +86,18 @@ const client = new Client({
     partials: [Partials.GuildMember, Partials.User]
 });
 
+// Tratamento de Erros Globais
+process.on('uncaughtException', (error) => console.error('❌ ERRO FATAL:', error));
+process.on('unhandledRejection', (reason) => console.error('❌ PROMISE REJEITADA:', reason));
+
+// --- EVENTOS DO BOT ---
+
 // IA de Resposta
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
     if (!message.mentions.has(client.user)) return;
 
-    if (!aiClient) return message.reply("❌ IA não configurada.");
+    if (!aiClient) return message.reply("❌ IA não configurada no servidor.");
 
     await message.channel.sendTyping();
 
@@ -119,29 +113,25 @@ client.on("messageCreate", async (message) => {
             }
         });
 
-        const textResponse = response.text || "";
+        const textResponse = response.text || "Sem resposta da IA.";
 
         if (textResponse.length > 2000) {
-            const chunks = textResponse.match(/[\s\S]{1,1900}/g);
+            const chunks = textResponse.match(/[\s\S]{1,1900}/g) || [];
             for (const chunk of chunks) await message.reply(chunk);
         } else {
             await message.reply(textResponse);
         }
 
     } catch (error) {
-        console.error(error);
-        message.reply("Erro ao usar IA.");
+        console.error("Erro na IA:", error);
+        message.reply("Ocorreu um erro ao processar sua solicitação.");
     }
 });
 
 client.once(Events.ClientReady, c => {
-    console.log(`✅ ONLINE: ${c.user.tag}`);
-    client.user.setActivity('🛡️ Monitorando');
+    console.log(`✅ LOGIN REALIZADO: ${c.user.tag}`);
+    client.user.setActivity('🛡️ Monitorando Servidor');
 });
-
-client.on(Events.ShardDisconnect, () => console.log('⚠️ Desconectado'));
-client.on(Events.ShardReconnecting, () => console.log('🔄 Reconectando'));
-client.on(Events.ShardResume, () => console.log('✅ Reconectado'));
 
 const createProgressBar = (days, minDays) => {
     const percentage = Math.min(days / minDays, 1);
@@ -154,7 +144,6 @@ client.on(Events.GuildMemberAdd, async member => {
     try {
         const createdAt = member.user.createdAt;
         const diffDays = Math.floor((Date.now() - createdAt) / 86400000);
-
         const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
 
         const embed = new EmbedBuilder()
@@ -186,13 +175,12 @@ client.on(Events.GuildMemberAdd, async member => {
         }
 
         if (CONFIG.AUTO_KICK && isSuspicious) {
-            await member.kick("Auto defesa");
+            await member.kick("Auto defesa: Conta muito nova");
         }
-
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('Erro no GuildMemberAdd:', e); }
 });
 
-// Saída
+// Saída de membro
 client.on(Events.GuildMemberRemove, async member => {
     const channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
     if (!channel?.isTextBased()) return;
@@ -203,32 +191,33 @@ client.on(Events.GuildMemberRemove, async member => {
     let executor = null;
 
     try {
-        const logs = await member.guild.fetchAuditLogs({ limit: 1 });
-        const first = logs.entries.first();
-
-        if (first && first.target?.id === member.id && (Date.now() - first.createdTimestamp) < 5000) {
-            if (first.action === AuditLogEvent.MemberKick) {
-                reason = 'Kickado';
-                color = 0xFFA500;
-                icon = '👢';
-                executor = first.executor;
-            }
-            if (first.action === AuditLogEvent.MemberBanAdd) {
-                reason = 'Banido';
-                color = 0xFF0000;
-                icon = '🚫';
-                executor = first.executor;
-            }
+        const logs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
+        const kickLog = logs.entries.first();
+        
+        // Verifica se foi kickado recentemente
+        if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 5000) {
+            reason = 'Expulso (Kick)';
+            color = 0xFFA500;
+            icon = '👢';
+            executor = kickLog.executor;
+        } else {
+             // Se não foi kick, verifica ban
+             const banLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberBanAdd });
+             const banLog = banLogs.entries.first();
+             if (banLog && banLog.target.id === member.id && (Date.now() - banLog.createdTimestamp) < 5000) {
+                 reason = 'Banido';
+                 color = 0xFF0000;
+                 icon = '🚫';
+                 executor = banLog.executor;
+             }
         }
-    } catch {}
+    } catch (e) { console.error("Erro audit log:", e); }
 
     const embed = new EmbedBuilder()
         .setColor(color)
         .setAuthor({ name: `${icon} SAÍDA` })
-        .setDescription(`${member.user.tag} saiu.`)
-        .addFields(
-            { name: 'Motivo', value: reason }
-        )
+        .setDescription(`${member.user.tag} saiu do servidor.`)
+        .addFields({ name: 'Motivo', value: reason })
         .setTimestamp();
 
     if (executor) embed.addFields({ name: 'Executor', value: executor.tag });
@@ -236,51 +225,50 @@ client.on(Events.GuildMemberRemove, async member => {
     channel.send({ embeds: [embed] });
 });
 
-// Interações
+// Interações (Botões)
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
     if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        return interaction.reply({ content: 'Sem permissão.', ephemeral: true });
+        return interaction.reply({ content: '❌ Você não tem permissão para usar isso.', ephemeral: true });
     }
 
     const [action, targetId] = interaction.customId.split('_');
     const guild = interaction.guild;
 
-    let user;
+    // Tentar buscar usuário mesmo se ele já saiu
+    let userTag = targetId;
     try {
-        user = await client.users.fetch(targetId);
-    } catch {
-        return interaction.reply({ content: 'Usuário inválido.', ephemeral: true });
-    }
+        const user = await client.users.fetch(targetId);
+        userTag = user.tag;
+    } catch {}
 
     const member = guild.members.cache.get(targetId);
-    const logChannel = guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
 
     try {
         if (action === 'kick') {
-            if (!member) return interaction.reply({ content: 'Usuário já saiu.', ephemeral: true });
-            await member.kick(`Kick por ${interaction.user.tag}`);
-            await interaction.reply({ content: `${user.tag} expulso.` });
+            if (!member) return interaction.reply({ content: 'Usuário já não está mais no servidor.', ephemeral: true });
+            await member.kick(`Expulso via Bot por ${interaction.user.tag}`);
+            await interaction.reply({ content: `👢 **${userTag}** foi expulso com sucesso.` });
         }
 
         if (action === 'ban') {
-            await guild.members.ban(targetId, { reason: `Ban por ${interaction.user.tag}` });
-            await interaction.reply({ content: `${user.tag} banido.` });
+            await guild.members.ban(targetId, { reason: `Banido via Bot por ${interaction.user.tag}` });
+            await interaction.reply({ content: `🔨 **${userTag}** foi banido com sucesso.` });
         }
 
         if (action === 'info') {
             const embed = new EmbedBuilder()
                 .setColor(0x5865F2)
-                .setTitle(`Relatório: ${user.tag}`)
-                .setDescription(`ID: ${user.id}`)
+                .setTitle(`Relatório: ${userTag}`)
+                .setDescription(`ID do Usuário: ${targetId}`)
                 .setTimestamp();
-
             await interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
     } catch (e) {
-        interaction.reply({ content: 'Erro: cargo do bot está baixo.', ephemeral: true });
+        console.error(e);
+        interaction.reply({ content: '❌ Erro: Verifique se meu cargo é superior ao do alvo.', ephemeral: true });
     }
 });
 
