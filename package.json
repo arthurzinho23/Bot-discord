@@ -1,7 +1,7 @@
 {
   "name": "discord-bot-guardian",
-  "version": "1.0.0",
-  "description": "Discord Bot with Gemini AI",
+  "version": "2.0.0",
+  "description": "Professional Discord Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
