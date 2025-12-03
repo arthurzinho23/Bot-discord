@@ -1,17 +1,36 @@
-const { Client, GatewayIntentBits, Events, EmbedBuilder, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+// ARQUIVO: index.js (Cole na pasta principal/root do GitHub)
 
-// --- CONFIGURAÇÃO PARA RENDER/REPLIT (Mantém o bot vivo) ---
+const { Client, GatewayIntentBits, Events, EmbedBuilder, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, AuditLogEvent } = require('discord.js');
+
+// --- SISTEMA ANTI-SLEEP (Para Render Gratuito) ---
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Rota de monitoramento
 app.get('/', (req, res) => res.send({ 
     status: '🛡️ Guardian Online', 
     uptime: process.uptime(),
     timestamp: new Date().toISOString()
 }));
 
-app.listen(port, () => console.log(`🌐 Web Server rodando na porta ${port} (Obrigatório para o Render)`));
+// Rota para o Auto-Ping
+app.get('/ping', (req, res) => res.status(200).send('Pong!'));
+
+app.listen(port, () => {
+    console.log(`🌐 Web Server rodando na porta ${port}`);
+    
+    // AUTO-PING: Evita que o Render durma após 15min de inatividade
+    const renderUrl = process.env.RENDER_EXTERNAL_URL;
+    if (renderUrl) {
+        console.log('⏰ Sistema Anti-Sleep ativado: ' + renderUrl);
+        setInterval(() => {
+            fetch(renderUrl + '/ping')
+                .then(() => console.log('💓 Heartbeat: Auto-ping (5min) realizado com sucesso.'))
+                .catch(err => console.error('💔 Heartbeat Falhou:', err.message));
+        }, 5 * 60 * 1000); // Executa a cada 5 minutos
+    }
+});
 // -----------------------------------------------------------
 
 
@@ -20,7 +39,8 @@ console.log('🔄 INICIANDO SISTEMA DE SEGURANÇA...');
 // ⚙️ CONFIGURAÇÃO CENTRAL
 const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN || 'SEU_TOKEN_AQUI', 
-    LOG_CHANNEL: '1445105144869032129',
+    ENTRY_CHANNEL: '1445105097796223078', // Canal de Entrada e Alertas
+    EXIT_CHANNEL: '1445105144869032129',  // Canal de Saída
     MIN_AGE_DAYS: 7,
     AUTO_KICK: false
 };
@@ -52,7 +72,8 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers, // CRUCIAL: Requer "Server Members Intent" ativado no portal
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent // CRUCIAL: Requer "Message Content Intent" ativado no portal
+        GatewayIntentBits.MessageContent, // CRUCIAL: Requer "Message Content Intent" ativado no portal
+        GatewayIntentBits.GuildModeration // Necessário para ler logs de banimento/kick
     ],
     partials: [Partials.GuildMember, Partials.User]
 });
@@ -62,6 +83,11 @@ client.once(Events.ClientReady, c => {
     console.log(`🛡️ Monitorando entradas no servidor...`);
     client.user.setActivity('🛡️ Monitorando Perímetro');
 });
+
+// Debug de Reconexão
+client.on(Events.ShardDisconnect, () => console.log('⚠️ Aviso: Conexão perdida. Tentando reconectar...'));
+client.on(Events.ShardReconnecting, () => console.log('🔄 Reconectando ao Discord...'));
+client.on(Events.ShardResume, () => console.log('✅ Conexão recuperada!'));
 
 // --- FUNÇÃO AUXILIAR DE ESTILO ---
 const createProgressBar = (days, minDays) => {
@@ -142,7 +168,7 @@ client.on(Events.GuildMemberAdd, async member => {
                     .setStyle(ButtonStyle.Secondary)
             );
 
-        const channel = member.guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+        const channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
         
         if (channel && channel.isTextBased()) {
             await channel.send({ 
@@ -151,7 +177,7 @@ client.on(Events.GuildMemberAdd, async member => {
                 components: [row] 
             });
         } else {
-            console.log('⚠️ Aviso: Canal de Logs não encontrado ou ID incorreto.');
+            console.log(`⚠️ Aviso: Canal de Entrada (${CONFIG.ENTRY_CHANNEL}) não encontrado.`);
         }
 
         // Auto-Kick Lógica
@@ -165,16 +191,63 @@ client.on(Events.GuildMemberAdd, async member => {
     }
 });
 
-// 🏃 EVENTO: SAÍDA DE MEMBRO (Genérico)
+// 🏃 EVENTO: SAÍDA DE MEMBRO (Detector de Kick/Ban/Saída)
 client.on(Events.GuildMemberRemove, async member => {
-     const channel = member.guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+     const channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
+     
      if(channel && channel.isTextBased()) {
+        
+        let reason = '🚪 Saiu por conta própria';
+        let color = 0x99AAB5; // Cinza (Padrão)
+        let icon = '📤';
+        let executor = null;
+
+        try {
+            // Tenta buscar nos logs de auditoria se foi Kick ou Ban recente (últimos 5 segundos)
+            const fetchedLogs = await member.guild.fetchAuditLogs({
+                limit: 1,
+            });
+            const firstEntry = fetchedLogs.entries.first();
+
+            // Verifica se existe log e se foi criado agora pouco (margem de 5s) e se o alvo é quem saiu
+            if (firstEntry && 
+                firstEntry.target.id === member.id && 
+                (Date.now() - firstEntry.createdTimestamp) < 5000) {
+                
+                if (firstEntry.action === AuditLogEvent.MemberKick) {
+                    reason = '🥾 Expulso (Kick)';
+                    color = 0xFFA500; // Laranja
+                    icon = '👢';
+                    executor = firstEntry.executor;
+                } else if (firstEntry.action === AuditLogEvent.MemberBanAdd) {
+                    reason = '🔨 Banido (Ban)';
+                    color = 0xFF0000; // Vermelho
+                    icon = '🚫';
+                    executor = firstEntry.executor;
+                }
+            }
+        } catch (error) {
+            console.error('Erro ao ler audit logs:', error);
+        }
+
         const embed = new EmbedBuilder()
-            .setColor(0x99AAB5) // Cinza
-            .setAuthor({ name: '📤 RADAR DE SAÍDA' })
-            .setDescription(`**${member.user.tag}** (ID: ${member.id}) deixou o servidor.`)
-            .setTimestamp();
+            .setColor(color)
+            .setAuthor({ name: `${icon} RADAR DE SAÍDA` })
+            .setDescription(`**${member.user}** (` + member.user.tag + `) deixou o servidor.`)
+            .addFields(
+                { name: '📝 Motivo/Ação', value: reason, inline: true },
+                { name: '⏰ Horário', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
+            );
+
+        if (executor) {
+            embed.addFields({ name: '👮 Executor', value: `${executor.tag}`, inline: true });
+        }
+            
+        embed.setTimestamp();
+        
         channel.send({ embeds: [embed] }).catch(e => console.log('Erro ao enviar log de saída'));
+     } else {
+         console.log(`⚠️ Aviso: Canal de Saída (${CONFIG.EXIT_CHANNEL}) não encontrado.`);
      }
 });
 
@@ -188,7 +261,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     const [action, targetId] = interaction.customId.split('_');
     const guild = interaction.guild;
-    const logChannel = guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+    const logChannel = guild.channels.cache.get(CONFIG.ENTRY_CHANNEL); // Logs de auditoria vão para o canal de Segurança
     
     // Tenta buscar o membro mesmo se já saiu (pelo ID)
     let targetUser;
