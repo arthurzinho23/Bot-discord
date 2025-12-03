@@ -1,3 +1,5 @@
+require('dotenv').config(); // Carrega as variáveis do arquivo .env localmente
+
 const { 
     Client, 
     GatewayIntentBits, 
@@ -31,8 +33,16 @@ const app = express();
 app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Advanced Logging' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
+    
+    // Mantém o bot acordado no Render/Replit (opcional)
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) setInterval(() => https.get(`${renderUrl}`), 5 * 60 * 1000);
+    if (renderUrl) {
+        setInterval(() => {
+            https.get(renderUrl, (res) => {
+                // Apenas para manter a conexão ativa
+            }).on('error', (err) => console.error('Ping Error:', err.message));
+        }, 5 * 60 * 1000);
+    }
 });
 
 // --- INTELIGÊNCIA ARTIFICIAL ---
@@ -41,13 +51,17 @@ if (CONFIG.GEMINI_KEY) {
     try {
         aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
         console.log('🧠 IA Gemini Conectada.');
-    } catch (err) { console.error('Erro ao conectar IA:', err.message); }
+    } catch (err) { 
+        console.error('Erro ao conectar IA:', err.message); 
+    }
+} else {
+    console.warn('⚠️ AVISO: GEMINI_API_KEY não encontrada no .env');
 }
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // OBRIGATÓRIO: Ative "Server Members Intent" no Dev Portal
+        GatewayIntentBits.GuildMembers, // OBRIGATÓRIO: Ative "Server Members Intent" no Dev Portal do Discord
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildModeration
@@ -72,26 +86,32 @@ client.on("messageCreate", async (message) => {
         return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
     }
 
-    // CHAT COM IA
+    // CHAT COM IA (Ao mencionar o bot)
     if (message.mentions.has(client.user)) {
-        if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key não foi configurada no sistema.");
+        if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key da IA não foi configurada no sistema.");
+        
         await message.channel.sendTyping();
 
         try {
             const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-            const systemPrompt = "Você é o Guardião de NewVille, um bot moderador engraçado, direto e bem-humorado. Fale como um cara que faz piada de tudo, mas continua sendo útil e responde qualquer pergunta sem enrolação. Seja rápido, esperto, um pouco sarcástico e com aquele tom de 'tô cansado mas ainda te ajudo'.
-Seu objetivo é sempre deixar a resposta clara, simples, com humor, e resolver o que o usuário pediu. Não use linguagem formal. Não pareça um robô. Sempre responda como se fosse uma pessoa zoando enquanto trabalha.";
+            
+            // CORREÇÃO AQUI: Uso de crases (backticks) para string de múltiplas linhas
+            const systemPrompt = `Você é o Guardião de NewVille, um bot moderador engraçado, direto e bem-humorado. Fale como um cara que faz piada de tudo, mas continua sendo útil e responde qualquer pergunta sem enrolação. Seja rápido, esperto, um pouco sarcástico e com aquele tom de 'tô cansado mas ainda te ajudo'.
+Seu objetivo é sempre deixar a resposta clara, simples, com humor, e resolver o que o usuário pediu. Não use linguagem formal. Não pareça um robô. Sempre responda como se fosse uma pessoa zoando enquanto trabalha.`;
 
             const response = await aiClient.models.generateContent({
-                model: 'gemini-2.5-flash',
+                model: 'gemini-1.5-flash', // Alterado para 1.5-flash que é a versão estável atual (se tiver acesso ao 2.5, pode mudar de volta)
                 contents: prompt,
                 config: { systemInstruction: systemPrompt }
             });
 
-            await message.reply(response.text || "Não consegui processar sua solicitação.");
+            // Verifica se houve resposta válida
+            const replyText = response.text ? response.text() : response.response.text(); 
+            await message.reply(replyText || "Não consegui formular uma resposta.");
+            
         } catch (error) {
             console.error("Erro IA:", error);
-            message.reply("❌ Ocorreu um erro interno ao processar a mensagem.");
+            message.reply("❌ Ocorreu um erro interno ao processar a mensagem com a IA.");
         }
     }
 });
@@ -100,7 +120,16 @@ Seu objetivo é sempre deixar a resposta clara, simples, com humor, e resolver o
 client.on(Events.GuildMemberAdd, async member => {
     try {
         let channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
-        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL); } catch(e) {}
+        // Tenta buscar se não estiver em cache
+        if (!channel) {
+            try { 
+                channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL); 
+            } catch(e) {
+                console.error(`Canal de entrada ${CONFIG.ENTRY_CHANNEL} não encontrado.`);
+                return;
+            }
+        }
+        
         if (!channel?.isTextBased()) return;
 
         const createdAt = member.user.createdAt;
@@ -122,7 +151,7 @@ client.on(Events.GuildMemberAdd, async member => {
             .setTimestamp()
             .setFooter({ text: `Membro #${member.guild.memberCount}` });
 
-        // Botões de ação rápida para moderadores
+        // Botões de ação rápida para moderadores (só aparecem se for suspeito)
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
@@ -141,7 +170,12 @@ client.on(Events.GuildMemberAdd, async member => {
 client.on(Events.GuildMemberRemove, async member => {
     try {
         let channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
-        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL); } catch(e) {}
+        if (!channel) {
+             try { 
+                channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL); 
+            } catch(e) { return; }
+        }
+        
         if (!channel?.isTextBased()) return;
 
         let reason = 'Saiu por conta própria';
@@ -154,6 +188,8 @@ client.on(Events.GuildMemberRemove, async member => {
             // Verifica Kick
             const kickLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
             const kickLog = kickLogs.entries.first();
+            
+            // Verifica se o log é recente (últimos 5 segundos) e se o alvo é o membro que saiu
             if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 5000) {
                 reason = '👢 Expulso (Kick)';
                 color = 0xFFA500; // Laranja
@@ -170,7 +206,9 @@ client.on(Events.GuildMemberRemove, async member => {
                     executor = banLog.executor;
                 }
             }
-        } catch (e) { console.log("Sem permissão para ler AuditLogs"); }
+        } catch (e) { 
+            // Ignora erro se o bot não tiver permissão "View Audit Log"
+        }
 
         const embed = new EmbedBuilder()
             .setColor(color)
@@ -192,24 +230,36 @@ client.on(Events.GuildMemberRemove, async member => {
     } catch(e) { console.error('Erro Saída:', e); }
 });
 
-// --- BOTÕES ---
+// --- LÓGICA DOS BOTÕES ---
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
+    
+    // Verifica permissão de quem clicou
     if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) 
-        return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
+        return interaction.reply({ content: '❌ Você não tem permissão para usar isso.', ephemeral: true });
 
     const [action, targetId] = interaction.customId.split('_');
 
     try {
+        // Busca o membro (pode ter saído já)
+        const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+
+        if (!targetMember) {
+            return interaction.reply({ content: '❌ Usuário não encontrado no servidor (provavelmente já saiu).', ephemeral: true });
+        }
+
         if (action === 'kick') {
-            await interaction.guild.members.kick(targetId, 'Bot Action');
-            interaction.reply({ content: '✅ Expulso.', ephemeral: true });
+            await targetMember.kick('Ação via Bot de Entrada (Botão)');
+            interaction.reply({ content: `✅ **${targetMember.user.tag}** foi expulso.`, ephemeral: true });
         }
         if (action === 'ban') {
-            await interaction.guild.members.ban(targetId);
-            interaction.reply({ content: '✅ Banido.', ephemeral: true });
+            await targetMember.ban({ reason: 'Ação via Bot de Entrada (Botão)' });
+            interaction.reply({ content: `✅ **${targetMember.user.tag}** foi banido.`, ephemeral: true });
         }
-    } catch (e) { interaction.reply({ content: '❌ Erro ao punir.', ephemeral: true }); }
+    } catch (e) { 
+        console.error(e);
+        interaction.reply({ content: '❌ Erro ao punir. Verifique se meu cargo é superior ao do alvo.', ephemeral: true }); 
+    }
 });
 
 client.login(CONFIG.TOKEN);
