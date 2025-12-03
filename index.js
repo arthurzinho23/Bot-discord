@@ -37,7 +37,7 @@ const app = express();
 
 app.get('/', (req, res) => {
     res.send({ 
-        status: '🛡️ Guardian Online', 
+        status: '🛡️ Guardian Online (Car Edition)', 
         uptime: process.uptime(),
         date: new Date().toISOString()
     });
@@ -69,7 +69,7 @@ let aiClient;
 if (CONFIG.GEMINI_KEY) {
     try {
         aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
-        console.log('🧠 IA Gemini Conectada.');
+        console.log('🧠 IA Gemini Conectada (Modo Gearhead Ativado).');
     } catch (err) {
         console.error('⚠️ Erro ao configurar Gemini:', err.message);
     }
@@ -105,34 +105,41 @@ client.on("messageCreate", async (message) => {
 
     try {
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-        if (!prompt) return message.reply("Como posso ajudar?");
+        if (!prompt) return message.reply("Fala tu, gearhead! Quer saber o que?");
+
+        // --- PERSONALIDADE CARROS & ZOEIRA ---
+        const systemPrompt = `
+            Você é o Guardian, um mecânico virtual zoeiro, engraçado e viciado em carros que modera este servidor.
+            DIRETRIZES:
+            1. SUAS RESPOSTAS DEVEM SER CURTAS E DIRETAS (Máximo 2 ou 3 frases).
+            2. Use gírias de carro (ex: lasanha, manco, apzeiro, gearhead, piloto de reta).
+            3. Seja engraçado e faça piadas com carros ruins (Marea, Peugeot velho, Kwid).
+            4. Se te perguntarem algo sério, responda, mas faça uma analogia com carros.
+            5. Nunca escreva textos longos.
+        `;
 
         const response = await aiClient.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
-                systemInstruction: "Você é um assistente útil e direto."
+                systemInstruction: systemPrompt,
+                maxOutputTokens: 150 // Força respostas curtas
             }
         });
 
-        const textResponse = response.text || "Sem resposta da IA.";
+        const textResponse = response.text || "Ih, o motor pifou aqui. Tenta de novo.";
 
-        if (textResponse.length > 2000) {
-            const chunks = textResponse.match(/[\s\S]{1,1900}/g) || [];
-            for (const chunk of chunks) await message.reply(chunk);
-        } else {
-            await message.reply(textResponse);
-        }
+        await message.reply(textResponse);
 
     } catch (error) {
         console.error("Erro na IA:", error);
-        message.reply("Ocorreu um erro ao processar sua solicitação.");
+        message.reply("Deu pau na injeção eletrônica aqui (Erro na API).");
     }
 });
 
 client.once(Events.ClientReady, c => {
     console.log(`✅ LOGIN REALIZADO: ${c.user.tag}`);
-    client.user.setActivity('🛡️ Monitorando Servidor');
+    client.user.setActivity('🚗 Roncando o motor');
 });
 
 const createProgressBar = (days, minDays) => {
@@ -150,34 +157,34 @@ client.on(Events.GuildMemberAdd, async member => {
 
         const embed = new EmbedBuilder()
             .setColor(isSuspicious ? 0xED4245 : 0x57F287)
-            .setAuthor({ name: `${member.user.tag} entrou`, iconURL: member.user.displayAvatarURL() })
-            .setTitle(isSuspicious ? '⛔ CONTA SUSPEITA' : '✅ Conta segura')
+            .setAuthor({ name: `${member.user.tag} estacionou na garagem`, iconURL: member.user.displayAvatarURL() })
+            .setTitle(isSuspicious ? '⛔ CARRO ROUBADO (SUSPEITO)' : '✅ Novo Piloto')
             .addFields(
                 { name: 'ID', value: ```yaml\n${member.id}\n``` },
                 { name: 'Bot?', value: ```${member.user.bot ? 'Sim' : 'Não'}``` },
-                { name: 'Idade da conta', value: `${diffDays} dias\n${createProgressBar(diffDays, 30)}` }
+                { name: 'Tempo de CNH (Conta)', value: `${diffDays} dias\n${createProgressBar(diffDays, 30)}` }
             )
             .setThumbnail(member.user.displayAvatarURL())
             .setTimestamp();
 
         const row = new ActionRowBuilder()
             .addComponents(
-                new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('EXPULSAR').setEmoji('🥾').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('BANIR').setEmoji('🔨').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`info_${member.id}`).setLabel('RELATÓRIO').setEmoji('📄').setStyle(ButtonStyle.Secondary)
+                new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('GUINCHAR (Kick)').setEmoji('🥾').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('PRENDER (Ban)').setEmoji('🔨').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(`info_${member.id}`).setLabel('DOCUMENTO').setEmoji('📄').setStyle(ButtonStyle.Secondary)
             );
 
         const channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
         if (channel?.isTextBased()) {
             await channel.send({
-                content: isSuspicious ? `||@here|| 🚨 POSSÍVEL ALT/RAID` : null,
+                content: isSuspicious ? `||@here|| 🚨 ALERTA DE CLONAGEM` : null,
                 embeds: [embed],
                 components: [row]
             });
         }
 
         if (CONFIG.AUTO_KICK && isSuspicious) {
-            await member.kick("Auto defesa: Conta muito nova");
+            await member.kick("Auto defesa: Conta muito nova (CNH Cassada)");
         }
     } catch (e) { console.error('Erro no GuildMemberAdd:', e); }
 });
@@ -187,7 +194,7 @@ client.on(Events.GuildMemberRemove, async member => {
     const channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
     if (!channel?.isTextBased()) return;
 
-    let reason = 'Saiu sozinho';
+    let reason = 'Vendeu o carro e saiu';
     let color = 0x99AAB5;
     let icon = '📤';
     let executor = null;
@@ -196,18 +203,16 @@ client.on(Events.GuildMemberRemove, async member => {
         const logs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
         const kickLog = logs.entries.first();
         
-        // Verifica se foi kickado recentemente
         if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 5000) {
-            reason = 'Expulso (Kick)';
+            reason = 'Guinchado (Kick)';
             color = 0xFFA500;
             icon = '👢';
             executor = kickLog.executor;
         } else {
-             // Se não foi kick, verifica ban
              const banLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberBanAdd });
              const banLog = banLogs.entries.first();
              if (banLog && banLog.target.id === member.id && (Date.now() - banLog.createdTimestamp) < 5000) {
-                 reason = 'Banido';
+                 reason = 'CNH Cassada (Ban)';
                  color = 0xFF0000;
                  icon = '🚫';
                  executor = banLog.executor;
@@ -218,7 +223,7 @@ client.on(Events.GuildMemberRemove, async member => {
     const embed = new EmbedBuilder()
         .setColor(color)
         .setAuthor({ name: `${icon} SAÍDA` })
-        .setDescription(`${member.user.tag} saiu do servidor.`)
+        .setDescription(`${member.user.tag} saiu cantando pneu.`)
         .addFields({ name: 'Motivo', value: reason })
         .setTimestamp();
 
@@ -232,13 +237,12 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
     if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        return interaction.reply({ content: '❌ Você não tem permissão para usar isso.', ephemeral: true });
+        return interaction.reply({ content: '❌ Você não tem carteira pra dirigir essa máquina.', ephemeral: true });
     }
 
     const [action, targetId] = interaction.customId.split('_');
     const guild = interaction.guild;
 
-    // Tentar buscar usuário mesmo se ele já saiu
     let userTag = targetId;
     try {
         const user = await client.users.fetch(targetId);
@@ -249,28 +253,28 @@ client.on(Events.InteractionCreate, async interaction => {
 
     try {
         if (action === 'kick') {
-            if (!member) return interaction.reply({ content: 'Usuário já não está mais no servidor.', ephemeral: true });
-            await member.kick(`Expulso via Bot por ${interaction.user.tag}`);
-            await interaction.reply({ content: `👢 **${userTag}** foi expulso com sucesso.` });
+            if (!member) return interaction.reply({ content: 'O cara já sumiu na neblina.', ephemeral: true });
+            await member.kick(`Guinchado por ${interaction.user.tag}`);
+            await interaction.reply({ content: `👢 **${userTag}** foi guinchado com sucesso.` });
         }
 
         if (action === 'ban') {
-            await guild.members.ban(targetId, { reason: `Banido via Bot por ${interaction.user.tag}` });
-            await interaction.reply({ content: `🔨 **${userTag}** foi banido com sucesso.` });
+            await guild.members.ban(targetId, { reason: `Apreendido por ${interaction.user.tag}` });
+            await interaction.reply({ content: `🔨 **${userTag}** teve o carro apreendido (Ban).` });
         }
 
         if (action === 'info') {
             const embed = new EmbedBuilder()
                 .setColor(0x5865F2)
-                .setTitle(`Relatório: ${userTag}`)
-                .setDescription(`ID do Usuário: ${targetId}`)
+                .setTitle(`Documento: ${userTag}`)
+                .setDescription(`Chassi (ID): ${targetId}`)
                 .setTimestamp();
             await interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
     } catch (e) {
         console.error(e);
-        interaction.reply({ content: '❌ Erro: Verifique se meu cargo é superior ao do alvo.', ephemeral: true });
+        interaction.reply({ content: '❌ Erro: Meu nitro falhou (Sem permissão).', ephemeral: true });
     }
 });
 
