@@ -166,7 +166,7 @@ client.on("messageCreate", async (message) => {
 client.once(Events.ClientReady, c => {
     console.log(`✅ SISTEMA OPERACIONAL: ${c.user.tag}`);
     console.log(`🛡️ Monitorando entradas no servidor...`);
-    client.user.setActivity('🛡️ Monitorando Perímetro');
+    client.user!.setActivity('🛡️ Monitorando Perímetro');
 });
 
 // Debug de Reconexão
@@ -261,14 +261,12 @@ client.on(Events.GuildMemberAdd, async member => {
                 embeds: [embed], 
                 components: [row] 
             });
-        } else {
-            console.log(`⚠️ Aviso: Canal de Entrada (${CONFIG.ENTRY_CHANNEL}) não encontrado.`);
         }
 
-        // Auto-Kick Lógica
+        // Auto-Kick
         if (CONFIG.AUTO_KICK && isSuspicious) {
-            await member.kick('🛡️ Auto-Defense: Conta muito recente.');
-            if(channel && channel.isTextBased()) await channel.send(`🤖 **AUTO-DEFESA:** O alvo ${member.user.tag} foi neutralizado (Kick) automaticamente.`);
+             await member.kick('🛡️ Auto-Defense: Conta muito recente.');
+             if(channel && channel.isTextBased()) await channel.send(`🤖 **AUTO-DEFESA:** O alvo ${member.user.tag} foi neutralizado (Kick) automaticamente.`);
         }
 
     } catch (error) {
@@ -285,7 +283,7 @@ client.on(Events.GuildMemberRemove, async member => {
         let reason = '🚪 Saiu por conta própria';
         let color = 0x99AAB5; // Cinza (Padrão)
         let icon = '📤';
-        let executor: any = null;
+        let executor = null;
 
         try {
             // Tenta buscar nos logs de auditoria se foi Kick ou Ban recente (últimos 5 segundos)
@@ -295,8 +293,9 @@ client.on(Events.GuildMemberRemove, async member => {
             const firstEntry = fetchedLogs.entries.first();
 
             // Verifica se existe log e se foi criado agora pouco (margem de 5s) e se o alvo é quem saiu
+            // TYPE FIX: (firstEntry.target as any).id
             if (firstEntry && 
-                firstEntry.target && firstEntry.target.id === member.id && 
+                (firstEntry.target as any)?.id === member.id && 
                 (Date.now() - firstEntry.createdTimestamp) < 5000) {
                 
                 if (firstEntry.action === AuditLogEvent.MemberKick) {
@@ -340,7 +339,7 @@ client.on(Events.GuildMemberRemove, async member => {
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
 
-    if (!interaction.member || typeof interaction.member.permissions === 'string' || !interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) {
+    if (!(interaction.member as any).permissions.has(PermissionFlagsBits.KickMembers)) {
         return interaction.reply({ content: '⛔ **ACESSO NEGADO.** Você não tem credenciais para esta operação.', ephemeral: true });
     }
 
@@ -414,7 +413,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 **ID:** \`${targetUser.id}\`
                 **Bot:** ${targetUser.bot ? 'Sim' : 'Não'}
                 **Conta Criada:** <t:${Math.floor(created.getTime()/1000)}:R>
-                **Entrou no Server:** ${joined ? `<t:${Math.floor(joined.getTime()/1000)}:R>` : 'Não está mais no servidor'}
+                **Entrou no Server:** ${joined ? `<t:${Math.floor(joined!.getTime()/1000)}:R>` : 'Não está mais no servidor'}
                 `);
             
             await interaction.reply({ embeds: [infoEmbed], ephemeral: true });
@@ -422,13 +421,6 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch (error) {
         console.error(error);
         await interaction.reply({ content: `❌ **ERRO DE EXECUÇÃO:** Verifique se meu cargo está ACIMA do cargo de ${targetUser.tag}.`, ephemeral: true });
-    }
-});
-
-// 💡 COMANDO EXTRA: !lockdown (Simulação)
-client.on(Events.MessageCreate, async message => {
-    if(message.content === '!lockdown' && message.member?.permissions.has(PermissionFlagsBits.Administrator)) {
-        message.channel.send('🚧 **MODO LOCKDOWN ATIVADO (Simulação)** 🚧\nNeste modo, o bot poderia fechar canais.');
     }
 });
 
