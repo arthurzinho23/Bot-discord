@@ -26,8 +26,8 @@ const CONFIG = {
     PORT: process.env.PORT || 3000,
 
     // ADICIONAR ESTES:
-    COTACAO_CHANNEL: 'ID_DO_CANAL_COTACAO',
-    VIP_ROLE_ID: 'ID_DO_CARGO_VIP'
+    COTACAO_CHANNEL: '1446631169054740602',
+    VIP_ROLE_ID: '1441086318229848185'
 };
 
 // Função para extrair números enviados no chat
@@ -113,7 +113,7 @@ client.on(Events.MessageCreate, async (message) => {
         const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 
         const cor = temCargoVip ? 0xFFD700 : 0x2B2D31;
-        const titulo = temCargoVip ? '👑 Cotação VIP Aplicada' : '📋 Cotação Padrão';
+        const titulo = temCargobooster ? '👑 Cotação Booster Aplicada' : '📋 Cotação Padrão';
         const rodape = temCargoVip ? 'Benefício de taxa reduzida ativo.' : 'Dica: VIPs pagam apenas 10% de taxa.';
 
         const embed = new EmbedBuilder()
@@ -123,7 +123,7 @@ client.on(Events.MessageCreate, async (message) => {
             .addFields(
                 { name: 'Valor Base', value: `\`${fmt.format(valorVeiculo)}\``, inline: true },
                 { name: `Taxa (${porcentagem}%)`, value: `\`+ ${fmt.format(taxa)}\``, inline: true },
-                { name: '💰 VALOR FINAL DE VENDA', value: `## ${fmt.format(valorFinal)}`, inline: false }
+                { name: '💰 VALOR FINAL DO VEICULI', value: `## ${fmt.format(valorFinal)}`, inline: false }
             )
             .setFooter({ text: rodape })
             .setTimestamp();
