@@ -22,21 +22,15 @@ const CONFIG = {
     ENTRY_CHANNEL: '1445105097796223078',
     EXIT_CHANNEL: '1445105144869032129',
     MIN_AGE_DAYS: 7,
-    AUTO_KICK: false,
+    AUTO_KICK: false, 
     PORT: process.env.PORT || 3000,
 
-    // ADICIONAR ESTES:
-    COTACAO_CHANNEL: '1446631169054740602',
-    VIP_ROLE_ID: '1441086318229848185'
+    // --- SUAS CONFIGURAÇÕES PEDIDAS ---
+    COTACAO_CHANNEL: "1446631169054740602", // Canal de cotação
+    BOOSTER_ROLE_ID: "1441086318229848185"  // Cargo Booster (VIP substituído)
 };
 
-// Função para extrair números enviados no chat
-function extrairValor(texto) {
-    const match = texto.replace(/\./g, '').match(/(\d+)/);
-    return match ? parseInt(match[1]) : null;
-}
-
-// --- SERVIDOR WEB ---
+// --- SERVIDOR WEB (Manter Online) ---
 const app = express();
 app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Advanced Logging' }));
 app.listen(CONFIG.PORT, () => {
@@ -45,7 +39,7 @@ app.listen(CONFIG.PORT, () => {
     if (renderUrl) setInterval(() => https.get(`${renderUrl}`), 5 * 60 * 1000);
 });
 
-// --- IA ---
+// --- INTELIGÊNCIA ARTIFICIAL ---
 let aiClient;
 if (CONFIG.GEMINI_KEY) {
     try {
@@ -65,92 +59,30 @@ const client = new Client({
     partials: [Partials.GuildMember, Partials.User]
 });
 
-// =========================================================
-// 📌 SISTEMA PRINCIPAL DE MENSAGENS (COM IA + COMANDOS + COTAÇÃO)
-// =========================================================
-client.on(Events.MessageCreate, async (message) => {
+// --- COMANDOS E IA ---
+client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
 
-    // ---------------------------------------
-    // 🔒 COMANDOS DE SEGURANÇA
-    // ---------------------------------------
     if (message.content === '!lock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
         return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Este canal foi trancado.');
     }
 
     if (message.content === '!unlock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
         return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
     }
 
-    // ---------------------------------------
-    // 💰 SISTEMA DE COTAÇÃO
-    // ---------------------------------------
-    const isCotacaoChannel = 
-        message.channel.id === CONFIG.COTACAO_CHANNEL || 
-        message.channel.parentId === CONFIG.COTACAO_CHANNEL;
-
-    if (isCotacaoChannel) {
-        const valorVeiculo = extrairValor(message.content);
-
-        if (!valorVeiculo || valorVeiculo <= 0) return;
-
-        await message.channel.sendTyping();
-
-        const temCargoVip = message.member.roles.cache.has(CONFIG.VIP_ROLE_ID);
-        const porcentagem = temCargoVip ? 10 : 15;
-
-        const taxa = valorVeiculo * (porcentagem / 100);
-        const valorFinal = valorVeiculo + taxa;
-
-        const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-
-        const cor = temCargoVip ? 0xFFD700 : 0x2B2D31;
-        const titulo = temCargobooster ? '👑 Cotação Booster Aplicada' : '📋 Cotação Padrão';
-        const rodape = temCargoVip ? 'Benefício de taxa reduzida ativo.' : 'Dica: VIPs pagam apenas 10% de taxa.';
-
-        const embed = new EmbedBuilder()
-            .setColor(cor)
-            .setTitle(titulo)
-            .setDescription(`Cálculo automático para **${message.author.username}**`)
-            .addFields(
-                { name: 'Valor Base', value: `\`${fmt.format(valorVeiculo)}\``, inline: true },
-                { name: `Taxa (${porcentagem}%)`, value: `\`+ ${fmt.format(taxa)}\``, inline: true },
-                { name: '💰 VALOR FINAL DO VEICULI', value: `## ${fmt.format(valorFinal)}`, inline: false }
-            )
-            .setFooter({ text: rodape })
-            .setTimestamp();
-
-        try {
-            return await message.reply({ embeds: [embed] });
-        } catch (err) {
-            console.error('Erro ao enviar cotação:', err);
-        }
-    }
-
-    // ---------------------------------------
-    // 🤖 CHAT COM IA (MENCIONAR O BOT)
-    // ---------------------------------------
     if (message.mentions.has(client.user)) {
-        if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key não foi configurada.");
-
+        if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key não foi configurada no sistema.");
         await message.channel.sendTyping();
 
         try {
             const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-            const systemPrompt = `
-Você é o Guardião de NewVille, um bot moderador engraçado, direto e zoeiro.
-Fale como alguém que faz piada de tudo mas ainda ajuda rápido e sem enrolar.
-Nada de linguagem formal, não fale como robô, responda curto, engraçado e útil.
-O servidor se passa nos EUA.
-`;
+            const systemPrompt = `Você é o Guardião de NewVille, um bot moderador engraçado, direto e bem-humorado. Fale como um cara que faz piada de tudo, mas continua sendo útil e responde qualquer pergunta sem enrolação. Seja rápido, esperto, um pouco sarcástico e com aquele tom de 'tô cansado mas ainda te ajudo'.
+Seu objetivo é sempre deixar a resposta clara, simples, com humor, e resolver o que o usuário pediu. Não use linguagem formal. Não pareça um robô. Sempre responda como se fosse uma pessoa zoando enquanto trabalha o servidor se passa nos EUA.`;
 
             const response = await aiClient.models.generateContent({
                 model: 'gemini-2.5-flash',
@@ -158,22 +90,19 @@ O servidor se passa nos EUA.
                 config: { systemInstruction: systemPrompt }
             });
 
-            await message.reply(response.text || "Não consegui responder isso não, parça.");
+            await message.reply(response.text || "Não consegui processar sua solicitação.");
         } catch (error) {
             console.error("Erro IA:", error);
-            message.reply("❌ Deu ruim aqui, tenta de novo depois.");
+            message.reply("❌ Ocorreu um erro interno ao processar a mensagem.");
         }
     }
 });
 
-// =========================================================
-// 👋 SISTEMA DE ENTRADA
-// =========================================================
+// --- SISTEMA DE ENTRADA (COMPLETO) ---
 client.on(Events.GuildMemberAdd, async member => {
     try {
         let channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
         if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL); } catch(e) {}
-
         if (!channel?.isTextBased()) return;
 
         const createdAt = member.user.createdAt;
@@ -185,36 +114,38 @@ client.on(Events.GuildMemberAdd, async member => {
             .setColor(isSuspicious ? 0xED4245 : 0x57F287)
             .setAuthor({ name: `${member.user.tag} Entrou`, iconURL: member.user.displayAvatarURL() })
             .setTitle(isSuspicious ? '⛔ CONTA DE RISCO (Nova)' : '✅ Entrada Segura')
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
             .addFields(
-                { name: '👤 Membro', value: `${member}` },
-                { name: '📅 Conta criada em', value: dateString },
-                { name: '⏳ Idade da conta', value: `${diffDays} dias` }
+                { name: '👤 Membro', value: `${member} (${member.id})`, inline: false },
+                { name: '📅 Data da Conta', value: `${dateString}`, inline: true },
+                { name: '⏳ Idade', value: `${diffDays} dias`, inline: true },
+                { name: '🛡️ Status', value: isSuspicious ? '⚠️ **SUSPEITO**' : '🟢 Seguro', inline: true }
             )
-            .setTimestamp();
+            .setTimestamp()
+            .setFooter({ text: `Membro #${member.guild.memberCount}` });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
             new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
         );
 
-        await channel.send({
-            content: isSuspicious ? `||@here|| 🚨 Conta suspeita detectada!` : null,
-            embeds: [embed],
-            components: isSuspicious ? [row] : []
+        await channel.send({ 
+            content: isSuspicious ? `||@here|| 🚨 **ALERTA:** Conta criada há menos de ${CONFIG.MIN_AGE_DAYS} dias!` : null,
+            embeds: [embed], 
+            components: isSuspicious ? [row] : [] 
         });
+
     } catch (e) { console.error('Erro Entrada:', e); }
 });
 
-// =========================================================
-// 📤 SISTEMA DE SAÍDA
-// =========================================================
+// --- SISTEMA DE SAÍDA AVANÇADO ---
 client.on(Events.GuildMemberRemove, async member => {
     try {
         let channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
         if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL); } catch(e) {}
         if (!channel?.isTextBased()) return;
 
-        let reason = 'Saiu do servidor';
+        let reason = 'Saiu por conta própria';
         let color = 0x99AAB5;
         let icon = '📤';
         let executor = null;
@@ -222,7 +153,6 @@ client.on(Events.GuildMemberRemove, async member => {
         try {
             const kickLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
             const kickLog = kickLogs.entries.first();
-
             if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 5000) {
                 reason = '👢 Expulso (Kick)';
                 color = 0xFFA500;
@@ -231,7 +161,6 @@ client.on(Events.GuildMemberRemove, async member => {
             } else {
                 const banLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberBanAdd });
                 const banLog = banLogs.entries.first();
-
                 if (banLog && banLog.target.id === member.id && (Date.now() - banLog.createdTimestamp) < 5000) {
                     reason = '🔨 Banido';
                     color = 0xFF0000;
@@ -239,7 +168,7 @@ client.on(Events.GuildMemberRemove, async member => {
                     executor = banLog.executor;
                 }
             }
-        } catch (e) {}
+        } catch (e) { console.log("Sem permissão para ler AuditLogs"); }
 
         const embed = new EmbedBuilder()
             .setColor(color)
@@ -252,20 +181,19 @@ client.on(Events.GuildMemberRemove, async member => {
             .setTimestamp();
 
         if (executor) {
-            embed.addFields({ name: '👮 Executor', value: executor.tag });
+            embed.addFields({ name: '👮 Executor', value: `${executor.tag}`, inline: false });
+            embed.setThumbnail(executor.displayAvatarURL());
         }
 
         channel.send({ embeds: [embed] });
 
-    } catch (e) { console.error('Erro saída:', e); }
+    } catch(e) { console.error('Erro Saída:', e); }
 });
 
-// =========================================================
-// 🔘 SISTEMA DE BOTÕES
-// =========================================================
+// --- BOTÕES ---
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
-    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers))
+    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers)) 
         return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
 
     const [action, targetId] = interaction.customId.split('_');
@@ -273,15 +201,13 @@ client.on(Events.InteractionCreate, async interaction => {
     try {
         if (action === 'kick') {
             await interaction.guild.members.kick(targetId, 'Bot Action');
-            interaction.reply({ content: '👢 Membro expulso.', ephemeral: true });
+            interaction.reply({ content: '✅ Expulso.', ephemeral: true });
         }
         if (action === 'ban') {
             await interaction.guild.members.ban(targetId);
-            interaction.reply({ content: '🚫 Membro banido.', ephemeral: true });
+            interaction.reply({ content: '✅ Banido.', ephemeral: true });
         }
-    } catch (e) {
-        interaction.reply({ content: '❌ Erro ao executar punição.', ephemeral: true });
-    }
+    } catch (e) { interaction.reply({ content: '❌ Erro ao punir.', ephemeral: true }); }
 });
 
 client.login(CONFIG.TOKEN);
