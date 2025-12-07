@@ -10,7 +10,7 @@
   "dependencies": {
     "discord.js": "^14.15.0",
     "express": "^4.19.2",
-    "@google/genai": "^0.1.1"
+    "@google/genai": "*"
   },
   "engines": {
     "node": ">=18.0.0"
