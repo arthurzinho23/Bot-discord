@@ -192,10 +192,12 @@ O servidor se passa nos EUA.
 `;
 
             const response = await aiClient.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: { systemInstruction: systemPrompt }
-            });
+    model: 'gemini-2.5-flash',
+    contents: prompt,
+    config: { systemInstruction: systemPrompt }
+});
+
+await message.reply(response.text || "Não consegui responder isso não, parça.");
 
             await message.reply(response.text || "Não consegui responder isso não, parça.");
         } catch (error) {
