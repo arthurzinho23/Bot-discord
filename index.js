@@ -61,13 +61,16 @@ function extrairValor(texto) {
 // Delay auxiliar
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// --- SERVIDOR WEB ---
+// --- SERVIDOR WEB (Para manter online no Render) ---
 const app = express();
 app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Admin Logs + Forum Support' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
+    // Ping automático para evitar hibernação (opcional, pois o Render faz isso)
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) setInterval(() => https.get(`${renderUrl}`), 5 * 60 * 1000);
+    if (renderUrl) {
+        setInterval(() => https.get(`${renderUrl}`).on('error', (err) => console.error('Ping Error:', err.message)), 5 * 60 * 1000);
+    }
 });
 
 // --- IA ---
