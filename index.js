@@ -14,67 +14,56 @@ import {
 import express from 'express';
 import https from 'https';
 import { GoogleGenAI } from "@google/genai";
-import dotenv from 'dotenv';
 
 // --- CONFIGURAÇÃO ---
-dotenv.config(); 
-
 const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN,
     GEMINI_KEY: process.env.GEMINI_API_KEY, 
     
-    // IDs DE CANAIS
-    ENTRY_CHANNEL: '1445105097796223078', // ✅ Canal de Entrada
-    EXIT_CHANNEL: '1445105144869032129',  // ✅ Canal de Saída (Log Admin)
-    COTACAO_CHANNEL: '1446631169054740602', // ✅ Canal de Cotação (Suporta Fórum)
+    // CANAIS
+    ENTRY_CHANNEL: '1445105097796223078',
+    EXIT_CHANNEL: '1445105144869032129',
+    COTACAO_CHANNEL: '1446631169054740602',
     
-    // IDs DE CARGOS
-    BOOSTER_ROLE_ID: '1441086318229848185', // ✅ Cargo Booster (antigo VIP)
+    // CARGOS
+    BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster
     
     MIN_AGE_DAYS: 7,
     AUTO_KICK: false,
     PORT: process.env.PORT || 3000
 };
 
-// Função para extrair números (Suporta 50k, 1m, R$ 50.000)
+// Função para extrair números (Melhorada para aceitar "50k", "1m", etc)
 function extrairValor(texto) {
-    if (!texto) return 0;
-    // Normaliza o texto: minúsculo, remove R$, substitui vírgula por ponto
-    const cleanText = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
-
-    // Verifica sufixo 'k' (milhares) ex: 50k -> 50000
-    if (cleanText.includes('k')) {
-        const match = cleanText.match(/(\d+(\.\d+)?)k/);
-        return match ? parseFloat(match[1]) * 1000 : 0;
+    if (!texto) return null;
+    // Remove pontos de milhar, R$, espaços extras
+    const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
+    
+    // Suporte a 'k' (mil)
+    if (clean.includes('k')) {
+        const match = clean.match(/(\d+(\.\d+)?)k/);
+        return match ? parseFloat(match[1]) * 1000 : null;
+    }
+    // Suporte a 'm' (milhão)
+    if (clean.includes('m')) {
+        const match = clean.match(/(\d+(\.\d+)?)m/);
+        return match ? parseFloat(match[1]) * 1000000 : null;
     }
     
-    // Verifica sufixo 'm' (milhões) ex: 1m -> 1000000
-    if (cleanText.includes('m')) {
-        const match = cleanText.match(/(\d+(\.\d+)?)m/);
-        return match ? parseFloat(match[1]) * 1000000 : 0;
-    }
-
-    // Padrão numérico simples
-    const match = cleanText.match(/(\d+)/);
-    return match ? parseInt(match[1]) : 0;
+    const match = clean.match(/(\d+)/);
+    return match ? parseInt(match[1]) : null;
 }
 
-// Delay auxiliar
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// --- SERVIDOR WEB (Para manter online no Render) ---
+// --- SERVIDOR WEB (Para o Render não desligar o bot) ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Admin Logs + Forum Support' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.0.0 ESM' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
-    // Ping automático
+    // Mantém o bot acordado se tiver URL externa
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
     if (renderUrl) {
         setInterval(() => {
-            https.get(`${renderUrl}`, (resp) => {
-                // Consome a resposta para liberar memória
-                resp.on('data', () => {});
-            }).on('error', (err) => console.error('Ping Error:', err.message));
+            https.get(renderUrl, () => {}).on('error', () => {});
         }, 5 * 60 * 1000);
     }
 });
@@ -85,9 +74,7 @@ if (CONFIG.GEMINI_KEY) {
     try {
         aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
         console.log('🧠 IA Gemini Conectada.');
-    } catch (err) { 
-        console.error('Erro ao conectar IA:', err.message); 
-    }
+    } catch (err) { console.error('Erro ao conectar IA:', err.message); }
 }
 
 const client = new Client({
@@ -95,116 +82,138 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // Essencial para ler o valor
+        GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildModeration
     ],
     partials: [
         Partials.GuildMember, 
         Partials.User, 
-        Partials.Channel, // Importante para canais de Fórum
+        Partials.Channel, // Necessário para Fóruns
         Partials.Message
     ]
 });
 
 // =========================================================
-// 📌 MENSAGENS (COMANDOS + COTAÇÃO + IA)
+// 📌 SISTEMA PRINCIPAL
 // =========================================================
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // --- COMANDOS ---
+    // 🔒 COMANDOS DE SEGURANÇA
     if (message.content === '!lock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
-        // Em fórum, trancar pode ser diferente (setLocked), mas mantendo genérico:
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
+            return message.reply('❌ Sem permissão.');
+        
         if (message.channel.isThread()) {
-            await message.channel.setLocked(true);
-            return message.reply('🔒 **Tópico Trancado.**');
+             await message.channel.setLocked(true);
+             return message.reply('🔒 Tópico trancado.');
         }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-        return message.reply('🔒 **BLOQUEIO:** Canal trancado.');
+        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Este canal foi trancado.');
     }
 
     if (message.content === '!unlock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
+            return message.reply('❌ Sem permissão.');
+        
         if (message.channel.isThread()) {
-            await message.channel.setLocked(false);
-            return message.reply('🔓 **Tópico Destrancado.**');
+             await message.channel.setLocked(false);
+             return message.reply('🔓 Tópico destrancado.');
         }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-        return message.reply('🔓 **DESBLOQUEIO:** Canal aberto.');
+        return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
     }
 
-    // --- COTAÇÃO (Compatível com FÓRUM) ---
-    // Verifica se é o canal exato OU se o "pai" do canal (caso seja um tópico/thread) é o canal de cotação
+    // 💰 SISTEMA DE COTAÇÃO
+    // Verifica ID do canal ou se é um tópico dentro do canal de cotação
     const isCotacaoChannel = 
         message.channel.id === CONFIG.COTACAO_CHANNEL || 
         message.channel.parentId === CONFIG.COTACAO_CHANNEL;
 
     if (isCotacaoChannel) {
-        // Se for um tópico de fórum, combinamos o conteúdo da mensagem com o NOME do tópico (Título)
-        // Isso ajuda se a pessoa colocou o preço no título: "Vendo Carro [50k]"
-        let textoParaAnalise = message.content;
-        
+        // Se for tópico, tenta ler o valor do título também
+        let textToAnalyze = message.content;
         if (message.channel.isThread()) {
-            textoParaAnalise += ' ' + message.channel.name;
+            textToAnalyze += ' ' + message.channel.name;
         }
 
-        const valorVeiculo = extrairValor(textoParaAnalise);
+        const valorVeiculo = extrairValor(textToAnalyze);
 
-        if (valorVeiculo > 0) {
+        if (valorVeiculo && valorVeiculo > 0) {
+            await message.channel.sendTyping();
+
+            // Verifica cargo Booster
             const isBooster = message.member.roles.cache.has(CONFIG.BOOSTER_ROLE_ID);
             const porcentagem = isBooster ? 10 : 15;
+
             const taxa = valorVeiculo * (porcentagem / 100);
             const valorFinal = valorVeiculo + taxa;
+
             const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-            const cor = isBooster ? 0xFF73FA : 0x2B2D31; 
-            
+
+            // Configuração Visual
+            const cor = isBooster ? 0xFF73FA : 0x2B2D31; // Rosa para Booster, Cinza padrão
+            const titulo = isBooster ? '🚀 Cotação Booster Aplicada' : '📋 Cotação Padrão';
+            const rodape = isBooster ? 'Benefício de taxa reduzida ativo.' : 'Dica: Boosters pagam apenas 10% de taxa.';
+
             const embed = new EmbedBuilder()
                 .setColor(cor)
-                .setTitle(isBooster ? '🚀 Cotação Booster' : '📋 Cotação Padrão')
-                .setDescription(`Cálculo para **${message.author.username}**`)
+                .setTitle(titulo)
+                .setDescription(`Cálculo automático para **${message.author.username}**`)
                 .addFields(
                     { name: 'Valor Base', value: `\`${fmt.format(valorVeiculo)}\``, inline: true },
                     { name: `Taxa (${porcentagem}%)`, value: `\`+ ${fmt.format(taxa)}\``, inline: true },
-                    { name: '💰 VALOR FINAL', value: `## ${fmt.format(valorFinal)}`, inline: false }
+                    { name: '💰 VALOR FINAL DO VEÍCULO', value: `## ${fmt.format(valorFinal)}`, inline: false }
                 )
-                .setFooter({ text: isBooster ? 'Benefício de Booster aplicado.' : 'Boosters pagam apenas 10% de taxa.' })
+                .setFooter({ text: rodape })
                 .setTimestamp();
 
-            return await message.reply({ embeds: [embed] }).catch(console.error);
+            try {
+                return await message.reply({ embeds: [embed] });
+            } catch (err) {
+                console.error('Erro ao enviar cotação:', err);
+            }
         }
     }
 
-    // --- IA ---
+    // 🤖 CHAT COM IA
     if (message.mentions.has(client.user)) {
         if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key não foi configurada.");
+
         await message.channel.sendTyping();
+
         try {
             const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-            if (!prompt) return message.reply("Fala comigo!");
+            const systemPrompt = `
+Você é o Guardião de NewVille, um bot moderador engraçado, direto e zoeiro.
+Fale como alguém que faz piada de tudo mas ainda ajuda rápido e sem enrolar.
+Nada de linguagem formal, não fale como robô, responda curto, engraçado e útil.
+O servidor se passa nos EUA.
+`;
 
-            const systemPrompt = "Você é o Guardião, um bot moderador zoeiro e direto.";
             const response = await aiClient.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: prompt,
                 config: { systemInstruction: systemPrompt }
             });
-            const text = response.text || "Sem resposta.";
-            if (text.length > 2000) await message.reply(text.substring(0, 1997) + '...');
-            else await message.reply(text);
+
+            await message.reply(response.text || "Não consegui responder isso não, parça.");
         } catch (error) {
             console.error("Erro IA:", error);
-            message.reply("❌ Erro no processamento.");
+            message.reply("❌ Deu ruim aqui, tenta de novo depois.");
         }
     }
 });
 
 // =========================================================
-// 👋 LOG DE ENTRADA (ADMINISTRAÇÃO)
+// 👋 SISTEMA DE ENTRADA (ADMIN LOG)
 // =========================================================
 client.on(Events.GuildMemberAdd, async member => {
     try {
-        const channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
+        let channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
+        // Tenta buscar se não estiver em cache
+        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL); } catch(e) {}
+
         if (!channel?.isTextBased()) return;
 
         const createdAt = member.user.createdAt;
@@ -213,8 +222,113 @@ client.on(Events.GuildMemberAdd, async member => {
         const dateString = createdAt.toLocaleDateString('pt-BR');
 
         const embed = new EmbedBuilder()
-            .setColor(isSuspicious ? 0xED4245 : 0x57F287)
-            .setAuthor({ name: 'Registro de Entrada', iconURL: member.guild.iconURL() })
-            .setTitle(isSuspicious ? '⚠️ Conta Recente Detectada' : '📥 Entrada de Membro')
+            .setColor(isSuspicious ? 0xED4245 : 0x57F287) // Vermelho se for nova, Verde se ok
+            .setAuthor({ name: `${member.user.tag} Entrou`, iconURL: member.user.displayAvatarURL() })
+            .setTitle(isSuspicious ? '⛔ CONTA DE RISCO (Nova)' : '✅ Entrada Segura')
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .setDescription(`O usuário ${member} (` + '\
+            .addFields(
+                { name: '👤 Membro', value: `${member} (${member.id})` },
+                { name: '📅 Conta criada em', value: dateString },
+                { name: '⏳ Idade da conta', value: `${diffDays} dias` }
+            )
+            .setFooter({ text: `Total de membros: ${member.guild.memberCount}` })
+            .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
+        );
+
+        await channel.send({
+            content: isSuspicious ? `||@here|| 🚨 Conta suspeita detectada!` : null,
+            embeds: [embed],
+            components: isSuspicious ? [row] : []
+        });
+    } catch (e) { console.error('Erro Entrada:', e); }
+});
+
+// =========================================================
+// 📤 SISTEMA DE SAÍDA (ADMIN LOG)
+// =========================================================
+client.on(Events.GuildMemberRemove, async member => {
+    try {
+        let channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
+        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL); } catch(e) {}
+        if (!channel?.isTextBased()) return;
+
+        // Pequeno delay para garantir que o Audit Log atualize
+        await new Promise(r => setTimeout(r, 2000));
+
+        let reason = 'Saiu por conta própria';
+        let color = 0xFEE75C; // Amarelo
+        let icon = '👋';
+        let executor = null;
+
+        try {
+            const kickLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
+            const kickLog = kickLogs.entries.first();
+
+            // Verifica se o kick aconteceu nos últimos 5 segundos
+            if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 10000) {
+                reason = '👢 Expulso (Kick)';
+                color = 0xE67E22; // Laranja
+                icon = '👢';
+                executor = kickLog.executor;
+            } else {
+                const banLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberBanAdd });
+                const banLog = banLogs.entries.first();
+
+                if (banLog && banLog.target.id === member.id && (Date.now() - banLog.createdTimestamp) < 10000) {
+                    reason = '🔨 Banido';
+                    color = 0xED4245; // Vermelho
+                    icon = '🚫';
+                    executor = banLog.executor;
+                }
+            }
+        } catch (e) { console.error('Erro audit log:', e); }
+
+        const embed = new EmbedBuilder()
+            .setColor(color)
+            .setAuthor({ name: `Saída: ${member.user.tag}`, iconURL: member.user.displayAvatarURL() })
+            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
+            .setDescription(`${icon} **${reason}**`)
+            .addFields(
+                { name: '👤 Membro', value: `${member.user.tag}`, inline: true },
+                { name: '🆔 ID', value: `${member.id}`, inline: true }
+            )
+            .setTimestamp();
+
+        if (executor) {
+            embed.addFields({ name: '👮 Executor', value: `${executor.tag}` });
+        }
+
+        channel.send({ embeds: [embed] });
+
+    } catch (e) { console.error('Erro saída:', e); }
+});
+
+// =========================================================
+// 🔘 SISTEMA DE BOTÕES
+// =========================================================
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers))
+        return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
+
+    const [action, targetId] = interaction.customId.split('_');
+
+    try {
+        if (action === 'kick') {
+            await interaction.guild.members.kick(targetId, 'Bot Action');
+            interaction.reply({ content: '👢 Membro expulso.', ephemeral: true });
+        }
+        if (action === 'ban') {
+            await interaction.guild.members.ban(targetId);
+            interaction.reply({ content: '🚫 Membro banido.', ephemeral: true });
+        }
+    } catch (e) {
+        interaction.reply({ content: '❌ Erro ao executar punição.', ephemeral: true });
+    }
+});
+
+client.login(CONFIG.TOKEN);
