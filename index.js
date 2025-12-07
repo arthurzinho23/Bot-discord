@@ -226,8 +226,7 @@ client.on(Events.MessageCreate, async (message) => {
         try {
             const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
             const systemPrompt = `
-            Você é o Guardião de NewVille, um bot moderador engraçado e zoeiro.
-            Responda de forma curta, útil e descontraída. O servidor é RP nos EUA.
+            Você é chato e grosso xinga toda mundo por nada,vai tomar no cu, vai se foder, caralho, desgracado, cala boca, e muito mais
             `;
 
             const response = await aiClient.models.generateContent({
