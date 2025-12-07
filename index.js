@@ -25,7 +25,7 @@ const CONFIG = {
     // IDs DE CANAIS
     ENTRY_CHANNEL: '1445105097796223078', // ✅ Canal de Entrada
     EXIT_CHANNEL: '1445105144869032129',  // ✅ Canal de Saída (Log Admin)
-    COTACAO_CHANNEL: '1446631169054740602', // ✅ Canal de Cotação
+    COTACAO_CHANNEL: '1446631169054740602', // ✅ Canal de Cotação (Suporta Fórum)
     
     // IDs DE CARGOS
     BOOSTER_ROLE_ID: '1441086318229848185', // ✅ Cargo Booster (antigo VIP)
@@ -35,10 +35,25 @@ const CONFIG = {
     PORT: process.env.PORT || 3000
 };
 
-// Função para extrair números
+// Função para extrair números (Suporta 50k, 1m, R$ 50.000)
 function extrairValor(texto) {
     if (!texto) return 0;
-    const cleanText = texto.replace(/\./g, '');
+    // Normaliza o texto: minúsculo, remove R$, substitui vírgula por ponto
+    const cleanText = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
+
+    // Verifica sufixo 'k' (milhares) ex: 50k -> 50000
+    if (cleanText.includes('k')) {
+        const match = cleanText.match(/(\d+(\.\d+)?)k/);
+        return match ? parseFloat(match[1]) * 1000 : 0;
+    }
+    
+    // Verifica sufixo 'm' (milhões) ex: 1m -> 1000000
+    if (cleanText.includes('m')) {
+        const match = cleanText.match(/(\d+(\.\d+)?)m/);
+        return match ? parseFloat(match[1]) * 1000000 : 0;
+    }
+
+    // Padrão numérico simples
     const match = cleanText.match(/(\d+)/);
     return match ? parseInt(match[1]) : 0;
 }
@@ -48,7 +63,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Admin Logs' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Admin Logs + Forum Support' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -71,10 +86,15 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.MessageContent, // Essencial para ler o valor
         GatewayIntentBits.GuildModeration
     ],
-    partials: [Partials.GuildMember, Partials.User]
+    partials: [
+        Partials.GuildMember, 
+        Partials.User, 
+        Partials.Channel, // Importante para canais de Fórum
+        Partials.Message
+    ]
 });
 
 // =========================================================
@@ -86,30 +106,49 @@ client.on(Events.MessageCreate, async (message) => {
     // --- COMANDOS ---
     if (message.content === '!lock') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
+        // Em fórum, trancar pode ser diferente (setLocked), mas mantendo genérico:
+        if (message.channel.isThread()) {
+            await message.channel.setLocked(true);
+            return message.reply('🔒 **Tópico Trancado.**');
+        }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
         return message.reply('🔒 **BLOQUEIO:** Canal trancado.');
     }
 
     if (message.content === '!unlock') {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
+        if (message.channel.isThread()) {
+            await message.channel.setLocked(false);
+            return message.reply('🔓 **Tópico Destrancado.**');
+        }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
         return message.reply('🔓 **DESBLOQUEIO:** Canal aberto.');
     }
 
-    // --- COTAÇÃO ---
+    // --- COTAÇÃO (Compatível com FÓRUM) ---
+    // Verifica se é o canal exato OU se o "pai" do canal (caso seja um tópico/thread) é o canal de cotação
     const isCotacaoChannel = 
         message.channel.id === CONFIG.COTACAO_CHANNEL || 
         message.channel.parentId === CONFIG.COTACAO_CHANNEL;
 
     if (isCotacaoChannel) {
-        const valorVeiculo = extrairValor(message.content);
+        // Se for um tópico de fórum, combinamos o conteúdo da mensagem com o NOME do tópico (Título)
+        // Isso ajuda se a pessoa colocou o preço no título: "Vendo Carro [50k]"
+        let textoParaAnalise = message.content;
+        
+        if (message.channel.isThread()) {
+            textoParaAnalise += ' ' + message.channel.name;
+        }
+
+        const valorVeiculo = extrairValor(textoParaAnalise);
+
         if (valorVeiculo > 0) {
             const isBooster = message.member.roles.cache.has(CONFIG.BOOSTER_ROLE_ID);
             const porcentagem = isBooster ? 10 : 15;
             const taxa = valorVeiculo * (porcentagem / 100);
             const valorFinal = valorVeiculo + taxa;
             const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-            const cor = isBooster ? 0xFF73FA : 0x2B2D31; // Rosa Booster ou Cinza Padrão
+            const cor = isBooster ? 0xFF73FA : 0x2B2D31; 
             
             const embed = new EmbedBuilder()
                 .setColor(cor)
@@ -164,9 +203,8 @@ client.on(Events.GuildMemberAdd, async member => {
         const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
         const dateString = createdAt.toLocaleDateString('pt-BR');
 
-        // Log focado em administração, não boas-vindas
         const embed = new EmbedBuilder()
-            .setColor(isSuspicious ? 0xED4245 : 0x57F287) // Vermelho se suspeito, Verde se ok
+            .setColor(isSuspicious ? 0xED4245 : 0x57F287)
             .setAuthor({ name: 'Registro de Entrada', iconURL: member.guild.iconURL() })
             .setTitle(isSuspicious ? '⚠️ Conta Recente Detectada' : '📥 Entrada de Membro')
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
