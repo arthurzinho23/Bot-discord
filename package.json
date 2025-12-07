@@ -1,6 +1,7 @@
 {
   "name": "discord-guardian-bot",
   "version": "1.0.0",
+  "type": "module",
   "description": "Bot de moderação e cotação para Discord",
   "main": "index.js",
   "scripts": {
@@ -14,7 +15,7 @@
     "discord.js": "^14.14.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "@google/genai": "*"
+    "@google/genai": "latest"
   },
   "engines": {
     "node": ">=18.0.0"
