@@ -56,7 +56,7 @@ function extrairValor(texto) {
 
 // --- SERVIDOR WEB (Para o Render não desligar o bot) ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.0.0 ESM' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.0.1 ESM' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     // Mantém o bot acordado se tiver URL externa
