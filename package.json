@@ -2,20 +2,15 @@
   "name": "discord-guardian-bot",
   "version": "1.0.0",
   "type": "module",
-  "description": "Bot de moderação e cotação para Discord",
+  "description": "Bot para Discord (Render Ready)",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "discord.js": "^14.14.0",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "@google/genai": "latest"
+    "discord.js": "^14.15.0",
+    "express": "^4.19.2",
+    "@google/genai": "^0.1.1"
   },
   "engines": {
     "node": ">=18.0.0"
