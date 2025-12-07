@@ -53,7 +53,7 @@ function extrairValorManual(texto) {
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '3.1.0 Rich-Embeds' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '3.2.0 Quota-Handling' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -146,7 +146,12 @@ client.on(Events.MessageCreate, async (message) => {
                 const extractedText = result.text ? result.text.trim().replace(/[^0-9]/g, '') : '0';
                 const aiValue = parseInt(extractedText);
                 if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
-            } catch (e) { }
+            } catch (e) { 
+                // Se der erro de cota (429), ignora silenciosamente e usa fallback manual
+                if (e.message?.includes('429') || e.status === 429) {
+                    console.warn("IA Cotação: Limite atingido, usando manual.");
+                }
+            }
         }
 
         if (valorVeiculo === 0) valorVeiculo = extrairValorManual(textToAnalyze) || 0;
@@ -204,7 +209,14 @@ VALOR FINAL:     R$ ${fmt(valorFinal)}
             `;
             const response = await aiClient.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt, config: { systemInstruction: systemPrompt } });
             await message.reply(response.text || "Não entendi nada, parça.");
-        } catch (error) { message.reply("🤯 Minha cabeça ferveu aqui. Tenta de novo."); }
+        } catch (error) { 
+            console.error("Erro Chat IA:", error.message);
+            // Tratamento específico para Erro de Cota (429)
+            if (error.message?.includes('429') || error.message?.includes('quota') || error.status === 429) {
+                 return message.reply("⏳ **Calma lá, muita conversa!** Atingi o limite gratuito da IA. Tenta de novo em 1 minuto.");
+            }
+            message.reply("🤯 Minha cabeça ferveu aqui. Tenta de novo."); 
+        }
     }
 });
 
