@@ -1,4 +1,4 @@
-const { 
+import { 
     Client, 
     GatewayIntentBits, 
     Events, 
@@ -9,14 +9,15 @@ const {
     ButtonStyle, 
     PermissionFlagsBits,
     AuditLogEvent
-} = require('discord.js');
+} from 'discord.js';
 
-const express = require('express');
-const https = require('https');
-const { GoogleGenAI } = require("@google/genai");
+import express from 'express';
+import https from 'https';
+import { GoogleGenAI } from "@google/genai";
+import dotenv from 'dotenv';
 
 // --- CONFIGURAÇÃO ---
-require('dotenv').config(); 
+dotenv.config(); 
 
 const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN,
@@ -66,10 +67,15 @@ const app = express();
 app.get('/', (req, res) => res.send({ status: 'Guardian Online', mode: 'Admin Logs + Forum Support' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
-    // Ping automático para evitar hibernação (opcional, pois o Render faz isso)
+    // Ping automático
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
     if (renderUrl) {
-        setInterval(() => https.get(`${renderUrl}`).on('error', (err) => console.error('Ping Error:', err.message)), 5 * 60 * 1000);
+        setInterval(() => {
+            https.get(`${renderUrl}`, (resp) => {
+                // Consome a resposta para liberar memória
+                resp.on('data', () => {});
+            }).on('error', (err) => console.error('Ping Error:', err.message));
+        }, 5 * 60 * 1000);
     }
 });
 
