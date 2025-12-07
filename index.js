@@ -8,7 +8,8 @@ import {
     ButtonBuilder, 
     ButtonStyle, 
     PermissionFlagsBits,
-    AuditLogEvent
+    AuditLogEvent,
+    ChannelType
 } from 'discord.js';
 
 import express from 'express';
@@ -23,7 +24,7 @@ const CONFIG = {
     // CANAIS
     ENTRY_CHANNEL: '1445105097796223078',
     EXIT_CHANNEL: '1445105144869032129',
-    COTACAO_CHANNEL: '1446631169054740602',
+    COTACAO_CHANNEL: '1446631169054740602', // Deve ser um Canal de Fórum
     
     // CARGOS
     BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster
@@ -52,7 +53,7 @@ function extrairValorManual(texto) {
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.1.0 AI-Quote' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.6.0 Forum-Creator' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -89,18 +90,61 @@ const client = new Client({
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // 🔒 COMANDOS DE SEGURANÇA
-    if (message.content === '!lock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
-        if (message.channel.isThread()) { await message.channel.setLocked(true); return message.reply('🔒 Tópico trancado.'); }
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Canal trancado.');
+    // 🆕 COMANDO PARA CRIAR TÓPICO NO FÓRUM
+    // Uso: !novo Título do Carro | Descrição e preço...
+    if (message.content.startsWith('!novo')) {
+        // Separa o título do conteúdo pelo símbolo "|"
+        const args = message.content.slice(6).split('|');
+        if (args.length < 2) return message.reply('❌ Uso correto: `!novo Título do Veículo | Descrição e Preço...`');
+
+        const titulo = args[0].trim();
+        const conteudo = args[1].trim();
+
+        try {
+            const forumChannel = message.guild.channels.cache.get(CONFIG.COTACAO_CHANNEL);
+            // Verifica se é um canal de fórum
+            if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
+                return message.reply('❌ O canal de cotação configurado não é um Fórum válido.');
+            }
+
+            // Cria o tópico
+            const thread = await forumChannel.threads.create({
+                name: titulo,
+                message: {
+                    content: `Postado por: ${message.author}\n\n${conteudo}`
+                }
+            });
+
+            return message.reply(`✅ Tópico criado com sucesso: ${thread}`);
+        } catch (error) {
+            console.error(error);
+            return message.reply('❌ Erro ao criar tópico. Verifique minhas permissões.');
+        }
     }
+
+    // 🔒 COMANDOS DE SEGURANÇA (SIMPLES)
+    if (message.content === '!lock') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
+            return message.reply('❌ Sem permissão.');
+        
+        if (message.channel.isThread()) {
+             await message.channel.setLocked(true);
+             return message.reply('🔒 Tópico trancado.');
+        }
+        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
+        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Este canal foi trancado.');
+    }
+
     if (message.content === '!unlock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
-        if (message.channel.isThread()) { await message.channel.setLocked(false); return message.reply('🔓 Tópico destrancado.'); }
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
+            return message.reply('❌ Sem permissão.');
+        
+        if (message.channel.isThread()) {
+             await message.channel.setLocked(false);
+             return message.reply('🔓 Tópico destrancado.');
+        }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-        return message.reply('🔓 **DESBLOQUEADO:** Canal aberto.');
+        return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
     }
 
     // 💰 SISTEMA DE COTAÇÃO (COM EXTRAÇÃO VIA IA)
@@ -109,12 +153,15 @@ client.on(Events.MessageCreate, async (message) => {
     if (isCotacaoChannel) {
         let valorVeiculo = 0;
         let textToAnalyze = message.content;
-        if (message.channel.isThread()) textToAnalyze += ' ' + message.channel.name;
+        
+        // Se for um fórum, o bot lê o Título do Tópico + Mensagem
+        if (message.channel.isThread()) {
+            textToAnalyze = `${message.channel.name} ${message.content}`;
+        }
 
-        // Se a IA estiver ativa, usa ela para ler o preço
+        // Tenta usar IA primeiro
         if (aiClient) {
             try {
-                // Prompt específico para extração de preço
                 const extractionPrompt = `
                 Analise o texto de venda de um veículo e identifique o PREÇO (VALOR) pedido.
                 Retorne APENAS o número inteiro cru (Exemplo: se for 50k, retorne 50000).
@@ -135,19 +182,12 @@ client.on(Events.MessageCreate, async (message) => {
                 
                 const extractedText = result.text.trim().replace(/[^0-9]/g, '');
                 const aiValue = parseInt(extractedText);
-                
-                if (!isNaN(aiValue) && aiValue > 0) {
-                    valorVeiculo = aiValue;
-                }
-            } catch (e) {
-                console.error("Erro na extração IA, tentando manual:", e);
-            }
+                if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
+            } catch (e) { console.error("Erro IA Cotação:", e); }
         }
 
-        // Se a IA falhar ou não achar, tenta o método manual
-        if (valorVeiculo === 0) {
-            valorVeiculo = extrairValorManual(textToAnalyze) || 0;
-        }
+        // Fallback Manual
+        if (valorVeiculo === 0) valorVeiculo = extrairValorManual(textToAnalyze) || 0;
 
         if (valorVeiculo > 0) {
             await message.channel.sendTyping();
@@ -174,13 +214,11 @@ client.on(Events.MessageCreate, async (message) => {
                 .setFooter({ text: rodape })
                 .setTimestamp();
 
-            try {
-                return await message.reply({ embeds: [embed] });
-            } catch (err) { console.error(err); }
+            try { return await message.reply({ embeds: [embed] }); } catch (err) { console.error(err); }
         }
     }
 
-    // 🤖 CHAT COM IA (MENCIONAR O BOT)
+    // 🤖 CHAT COM IA
     if (message.mentions.has(client.user)) {
         if (!aiClient) return message.reply("⚠️ **Erro:** API Key não configurada.");
         await message.channel.sendTyping();
