@@ -37,23 +37,23 @@ const CONFIG = {
 // Função Fallback (Regex simples caso a IA falhe)
 function extrairValorManual(texto) {
     if (!texto) return null;
-    const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
+    const clean = texto.toLowerCase().replace(/r$/g, '').replace(/./g, '').replace(/,/g, '.');
     
     if (clean.includes('k')) {
-        const match = clean.match(/(\d+(\.\d+)?)k/);
+        const match = clean.match(/(d+(.d+)?)k/);
         return match ? parseFloat(match[1]) * 1000 : null;
     }
     if (clean.includes('m')) {
-        const match = clean.match(/(\d+(\.\d+)?)m/);
+        const match = clean.match(/(d+(.d+)?)m/);
         return match ? parseFloat(match[1]) * 1000000 : null;
     }
-    const match = clean.match(/(\d+)/);
+    const match = clean.match(/(d+)/);
     return match ? parseInt(match[1]) : null;
 }
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.6.0 Forum-Creator' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.7.0 Robust-AI' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -93,7 +93,6 @@ client.on(Events.MessageCreate, async (message) => {
     // 🆕 COMANDO PARA CRIAR TÓPICO NO FÓRUM
     // Uso: !novo Título do Carro | Descrição e preço...
     if (message.content.startsWith('!novo')) {
-        // Separa o título do conteúdo pelo símbolo "|"
         const args = message.content.slice(6).split('|');
         if (args.length < 2) return message.reply('❌ Uso correto: `!novo Título do Veículo | Descrição e Preço...`');
 
@@ -102,12 +101,10 @@ client.on(Events.MessageCreate, async (message) => {
 
         try {
             const forumChannel = message.guild.channels.cache.get(CONFIG.COTACAO_CHANNEL);
-            // Verifica se é um canal de fórum
             if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
                 return message.reply('❌ O canal de cotação configurado não é um Fórum válido.');
             }
 
-            // Cria o tópico
             const thread = await forumChannel.threads.create({
                 name: titulo,
                 message: {
@@ -154,24 +151,16 @@ client.on(Events.MessageCreate, async (message) => {
         let valorVeiculo = 0;
         let textToAnalyze = message.content;
         
-        // Se for um fórum, o bot lê o Título do Tópico + Mensagem
         if (message.channel.isThread()) {
             textToAnalyze = `${message.channel.name} ${message.content}`;
         }
 
-        // Tenta usar IA primeiro
         if (aiClient) {
             try {
                 const extractionPrompt = `
-                Analise o texto de venda de um veículo e identifique o PREÇO (VALOR) pedido.
-                Retorne APENAS o número inteiro cru (Exemplo: se for 50k, retorne 50000).
-                
-                Regras:
-                1. Ignore modelos de carro (Ex: "BMW 320i" -> O valor é 0, não 320).
-                2. Ignore anos (Ex: "Ano 2024" -> O valor é 0, não 2024).
-                3. Se o usuário escrever "Valor: 60000", retorne 60000.
-                4. Se não encontrar nenhum preço claro, retorne 0.
-                
+                Analise o texto e identifique o PREÇO (VALOR) pedido.
+                Retorne APENAS o número inteiro (Ex: 50k -> 50000).
+                Se não achar, retorne 0.
                 Texto: "${textToAnalyze}"
                 `;
 
@@ -180,13 +169,12 @@ client.on(Events.MessageCreate, async (message) => {
                     contents: extractionPrompt
                 });
                 
-                const extractedText = result.text.trim().replace(/[^0-9]/g, '');
+                const extractedText = result.text ? result.text.trim().replace(/[^0-9]/g, '') : '0';
                 const aiValue = parseInt(extractedText);
                 if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
-            } catch (e) { console.error("Erro IA Cotação:", e); }
+            } catch (e) { console.error("Erro IA Cotação (não fatal):", e.message); }
         }
 
-        // Fallback Manual
         if (valorVeiculo === 0) valorVeiculo = extrairValorManual(textToAnalyze) || 0;
 
         if (valorVeiculo > 0) {
@@ -221,10 +209,13 @@ client.on(Events.MessageCreate, async (message) => {
     // 🤖 CHAT COM IA
     if (message.mentions.has(client.user)) {
         if (!aiClient) return message.reply("⚠️ **Erro:** API Key não configurada.");
+        
+        const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
+        if (!prompt) return message.reply("❓ Manda um texto aí junto com a menção.");
+
         await message.channel.sendTyping();
 
         try {
-            const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
             const systemPrompt = `
             Você é o Guardião de NewVille, um bot moderador engraçado e zoeiro.
             Responda de forma curta, útil e descontraída. O servidor é RP nos EUA.
@@ -238,8 +229,9 @@ client.on(Events.MessageCreate, async (message) => {
 
             await message.reply(response.text || "Não entendi nada, parça.");
         } catch (error) {
-            console.error("Erro IA:", error);
-            message.reply("❌ Deu ruim na IA.");
+            console.error("Erro COMPLETO da IA:", error);
+            // Mensagem amigável de erro
+            message.reply(`❌ A IA deu erro: ${error.message || 'Erro desconhecido'}. Verifique os logs do Render.`);
         }
     }
 });
