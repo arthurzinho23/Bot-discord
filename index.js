@@ -24,36 +24,36 @@ const CONFIG = {
     // CANAIS
     ENTRY_CHANNEL: '1445105097796223078',
     EXIT_CHANNEL: '1445105144869032129',
-    COTACAO_CHANNEL: '1446631169054740602', // Deve ser um Canal de Fórum
+    COTACAO_CHANNEL: '1446631169054740602', 
     
     // CARGOS
-    BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster
+    BOOSTER_ROLE_ID: '1441086318229848185', 
     
     MIN_AGE_DAYS: 7,
     AUTO_KICK: false,
     PORT: process.env.PORT || 3000
 };
 
-// Função Fallback (Regex simples caso a IA falhe)
+// Função Fallback (Regex simples)
 function extrairValorManual(texto) {
     if (!texto) return null;
-    const clean = texto.toLowerCase().replace(/r$/g, '').replace(/./g, '').replace(/,/g, '.');
+    const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
     
     if (clean.includes('k')) {
-        const match = clean.match(/(d+(.d+)?)k/);
+        const match = clean.match(/(\d+(\.\d+)?)k/);
         return match ? parseFloat(match[1]) * 1000 : null;
     }
     if (clean.includes('m')) {
-        const match = clean.match(/(d+(.d+)?)m/);
+        const match = clean.match(/(\d+(\.\d+)?)m/);
         return match ? parseFloat(match[1]) * 1000000 : null;
     }
-    const match = clean.match(/(d+)/);
+    const match = clean.match(/(\d+)/);
     return match ? parseInt(match[1]) : null;
 }
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.7.0 Robust-AI' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '3.1.0 Rich-Embeds' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -90,61 +90,41 @@ const client = new Client({
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // 🆕 COMANDO PARA CRIAR TÓPICO NO FÓRUM
-    // Uso: !novo Título do Carro | Descrição e preço...
+    // 🆕 COMANDO !novo
     if (message.content.startsWith('!novo')) {
         const args = message.content.slice(6).split('|');
-        if (args.length < 2) return message.reply('❌ Uso correto: `!novo Título do Veículo | Descrição e Preço...`');
-
+        if (args.length < 2) return message.reply('❌ Uso correto: `!novo Título | Descrição...`');
         const titulo = args[0].trim();
         const conteudo = args[1].trim();
 
         try {
             const forumChannel = message.guild.channels.cache.get(CONFIG.COTACAO_CHANNEL);
-            if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
-                return message.reply('❌ O canal de cotação configurado não é um Fórum válido.');
-            }
+            if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) return message.reply('❌ Canal de Fórum inválido.');
 
             const thread = await forumChannel.threads.create({
                 name: titulo,
-                message: {
-                    content: `Postado por: ${message.author}\n\n${conteudo}`
-                }
+                message: { content: `Postado por: ${message.author}\n\n${conteudo}` }
             });
-
-            return message.reply(`✅ Tópico criado com sucesso: ${thread}`);
-        } catch (error) {
-            console.error(error);
-            return message.reply('❌ Erro ao criar tópico. Verifique minhas permissões.');
-        }
+            return message.reply(`✅ Tópico criado: ${thread}`);
+        } catch (error) { return message.reply('❌ Erro ao criar tópico.'); }
     }
 
-    // 🔒 COMANDOS DE SEGURANÇA (SIMPLES)
+    // 🔒 COMANDOS DE SEGURANÇA
     if (message.content === '!lock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
-        if (message.channel.isThread()) {
-             await message.channel.setLocked(true);
-             return message.reply('🔒 Tópico trancado.');
-        }
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
+        if (message.channel.isThread()) { await message.channel.setLocked(true); return message.reply('🔒 Tópico trancado.'); }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Este canal foi trancado.');
+        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Canal trancado.');
     }
 
     if (message.content === '!unlock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
-        if (message.channel.isThread()) {
-             await message.channel.setLocked(false);
-             return message.reply('🔓 Tópico destrancado.');
-        }
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) return message.reply('❌ Sem permissão.');
+        if (message.channel.isThread()) { await message.channel.setLocked(false); return message.reply('🔓 Tópico destrancado.'); }
         await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-        return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
+        return message.reply('🔓 **DESBLOQUEADO:** Canal aberto.');
     }
 
-    // 💰 SISTEMA DE COTAÇÃO (COM EXTRAÇÃO VIA IA)
+    // 💰 SISTEMA DE COTAÇÃO (VISUAL RICO 🧾)
     const isCotacaoChannel = message.channel.id === CONFIG.COTACAO_CHANNEL || message.channel.parentId === CONFIG.COTACAO_CHANNEL;
 
     if (isCotacaoChannel) {
@@ -159,20 +139,14 @@ client.on(Events.MessageCreate, async (message) => {
             try {
                 const extractionPrompt = `
                 Analise o texto e identifique o PREÇO (VALOR) pedido.
-                Retorne APENAS o número inteiro (Ex: 50k -> 50000).
-                Se não achar, retorne 0.
+                Retorne APENAS o número inteiro (Ex: 50k -> 50000). Se não achar, 0.
                 Texto: "${textToAnalyze}"
                 `;
-
-                const result = await aiClient.models.generateContent({
-                    model: 'gemini-2.5-flash',
-                    contents: extractionPrompt
-                });
-                
+                const result = await aiClient.models.generateContent({ model: 'gemini-2.5-flash', contents: extractionPrompt });
                 const extractedText = result.text ? result.text.trim().replace(/[^0-9]/g, '') : '0';
                 const aiValue = parseInt(extractedText);
                 if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
-            } catch (e) { console.error("Erro IA Cotação (não fatal):", e.message); }
+            } catch (e) { }
         }
 
         if (valorVeiculo === 0) valorVeiculo = extrairValorManual(textToAnalyze) || 0;
@@ -185,21 +159,30 @@ client.on(Events.MessageCreate, async (message) => {
             const taxa = valorVeiculo * (porcentagem / 100);
             const valorFinal = valorVeiculo + taxa;
 
-            const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+            // Formatação Monetária
+            const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
             const cor = isBooster ? 0xFF73FA : 0x2B2D31;
-            const titulo = isBooster ? '🚀 Cotação Booster Aplicada' : '📋 Cotação Padrão';
-            const rodape = isBooster ? 'Benefício de taxa reduzida ativo.' : 'Dica: Boosters pagam apenas 10% de taxa.';
+            const titulo = isBooster ? '💎 Cotação Especial (Booster)' : '📋 Cotação de Veículo';
+            const footerText = isBooster ? 'Obrigado por impulsionar o servidor! 🚀' : 'Dica: Boosters pagam apenas 10% de taxa.';
 
             const embed = new EmbedBuilder()
                 .setColor(cor)
                 .setTitle(titulo)
-                .setDescription(`Cálculo automático para **${message.author.username}**`)
-                .addFields(
-                    { name: 'Valor Base', value: `\`${fmt.format(valorVeiculo)}\``, inline: true },
-                    { name: `Taxa (${porcentagem}%)`, value: `\`+ ${fmt.format(taxa)}\``, inline: true },
-                    { name: '💰 VALOR FINAL DO VEÍCULO', value: `## ${fmt.format(valorFinal)}`, inline: false }
-                )
-                .setFooter({ text: rodape })
+                .setDescription(`Cálculo de venda gerado para **${message.author}**.
+${isBooster ? '✨ **Taxa Reduzida Aplicada!**' : ''}`)
+                .setThumbnail('https://cdn-icons-png.flaticon.com/512/3097/3097144.png') // Ícone Genérico de Carro
+                .addFields({
+                    name: '🧾 Nota Fiscal Eletrônica',
+                    value: ```yaml
+Valor Veículo:   R$ ${fmt(valorVeiculo)}
+Taxa (${porcentagem}%):     + R$ ${fmt(taxa)}
+==============================
+VALOR FINAL:     R$ ${fmt(valorFinal)}
+```,
+                    inline: false
+                })
+                .setFooter({ text: footerText })
                 .setTimestamp();
 
             try { return await message.reply({ embeds: [embed] }); } catch (err) { console.error(err); }
@@ -209,7 +192,6 @@ client.on(Events.MessageCreate, async (message) => {
     // 🤖 CHAT COM IA
     if (message.mentions.has(client.user)) {
         if (!aiClient) return message.reply("⚠️ **Erro:** API Key não configurada.");
-        
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
         if (!prompt) return message.reply("❓ Manda um texto aí junto com a menção.");
 
@@ -220,24 +202,14 @@ client.on(Events.MessageCreate, async (message) => {
             Você é o Guardião de NewVille, um bot moderador engraçado e zoeiro.
             Responda de forma curta, útil e descontraída. O servidor é RP nos EUA.
             `;
-
-            const response = await aiClient.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: { systemInstruction: systemPrompt }
-            });
-
+            const response = await aiClient.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt, config: { systemInstruction: systemPrompt } });
             await message.reply(response.text || "Não entendi nada, parça.");
-        } catch (error) {
-            console.error("Erro COMPLETO da IA:", error);
-            // Mensagem amigável de erro
-            message.reply(`❌ A IA deu erro: ${error.message || 'Erro desconhecido'}. Verifique os logs do Render.`);
-        }
+        } catch (error) { message.reply("🤯 Minha cabeça ferveu aqui. Tenta de novo."); }
     }
 });
 
 // =========================================================
-// 👋 ENTRADA
+// 👋 ENTRADA (VISUAL RICO)
 // =========================================================
 client.on(Events.GuildMemberAdd, async member => {
     try {
@@ -247,27 +219,31 @@ client.on(Events.GuildMemberAdd, async member => {
 
         const diffDays = Math.floor((Date.now() - member.user.createdAt) / 86400000);
         const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
+        const creationDate = member.user.createdAt.toLocaleDateString('pt-BR');
 
         const embed = new EmbedBuilder()
             .setColor(isSuspicious ? 0xED4245 : 0x57F287)
-            .setAuthor({ name: `${member.user.tag} Entrou`, iconURL: member.user.displayAvatarURL() })
-            .setTitle(isSuspicious ? '⛔ CONTA DE RISCO (Nova)' : '✅ Entrada Segura')
+            .setAuthor({ name: 'Registro de Entrada', iconURL: member.guild.iconURL() })
+            .setTitle(isSuspicious ? '🚨 ALERTA: CONTA DE RISCO DETECTADA' : '✅ Novo Membro Registrado')
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
+            .setDescription(isSuspicious 
+                ? '**ATENÇÃO STAFF:** Esta conta foi criada recentemente e requer monitoramento.' 
+                : `O usuário ${member} acabou de entrar no servidor.`)
             .addFields(
-                { name: '👤 Membro', value: `${member} (${member.id})` },
-                { name: '📅 Criada em', value: member.user.createdAt.toLocaleDateString('pt-BR') },
-                { name: '⏳ Idade', value: `${diffDays} dias` }
+                { name: '🆔 Identificação', value: ```${member.id}```, inline: true },
+                { name: '📅 Criação da Conta', value: `**${creationDate}** (${diffDays} dias atrás)`, inline: true },
+                { name: '📊 Status', value: isSuspicious ? '🔴 **Altamente Suspeito**' : '🟢 **Regular**', inline: false }
             )
-            .setFooter({ text: `Membros: ${member.guild.memberCount}` })
+            .setFooter({ text: `Guardian Security • Total: ${member.guild.memberCount}`, iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Kick').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Ban').setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
         );
 
         await channel.send({ 
-            content: isSuspicious ? '||@here|| 🚨 Alerta!' : null, 
+            content: isSuspicious ? '||@here|| ⚠️ **Ação Necessária**' : null, 
             embeds: [embed], 
             components: isSuspicious ? [row] : [] 
         });
@@ -275,7 +251,7 @@ client.on(Events.GuildMemberAdd, async member => {
 });
 
 // =========================================================
-// 📤 SAÍDA
+// 📤 SAÍDA (VISUAL RICO)
 // =========================================================
 client.on(Events.GuildMemberRemove, async member => {
     try {
@@ -284,28 +260,40 @@ client.on(Events.GuildMemberRemove, async member => {
         if (!channel?.isTextBased()) return;
 
         await new Promise(r => setTimeout(r, 2000));
-        let reason = 'Saiu sozinho';
+        let reason = 'Saiu por conta própria';
+        let desc = 'O usuário decidiu sair do servidor.';
         let color = 0xFEE75C;
+        let title = 'Saída de Membro';
+        let icon = '👋';
         let executor = null;
 
         try {
             const logs = await member.guild.fetchAuditLogs({ limit: 1 });
             const log = logs.entries.first();
             if (log && log.target.id === member.id && (Date.now() - log.createdTimestamp) < 10000) {
-                if (log.action === AuditLogEvent.MemberKick) { reason = '👢 Kick'; color = 0xE67E22; executor = log.executor; }
-                if (log.action === AuditLogEvent.MemberBanAdd) { reason = '🔨 Ban'; color = 0xED4245; executor = log.executor; }
+                if (log.action === AuditLogEvent.MemberKick) { 
+                    reason = 'Expulso (Kick)'; title = 'Expulsão Registrada'; color = 0xE67E22; icon='👢'; executor = log.executor; desc = '**Motivo:** Expulso manualmente por um administrador.';
+                }
+                if (log.action === AuditLogEvent.MemberBanAdd) { 
+                    reason = 'Banido'; title = 'Banimento Registrado'; color = 0xED4245; icon='🚫'; executor = log.executor; desc = '**Motivo:** Banido por violação das regras.';
+                }
             }
         } catch (e) {}
 
         const embed = new EmbedBuilder()
             .setColor(color)
-            .setAuthor({ name: `Saída: ${member.user.tag}`, iconURL: member.user.displayAvatarURL() })
+            .setAuthor({ name: 'Log de Saída', iconURL: member.guild.iconURL() })
+            .setTitle(`${icon} ${title}`)
             .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .setDescription(`${reason === 'Saiu sozinho' ? '👋' : '🚫'} **${reason}**`)
-            .addFields({ name: '👤 Membro', value: `${member.user.tag}`, inline: true }, { name: '🆔 ID', value: `${member.id}`, inline: true })
+            .setDescription(desc)
+            .addFields(
+                { name: '👤 Usuário', value: `**${member.user.tag}**`, inline: true },
+                { name: '🆔 ID do Usuário', value: ```${member.id}```, inline: true }
+            )
+            .setFooter({ text: 'Guardian Moderation Logs', iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
-        if (executor) embed.addFields({ name: '👮 Executor', value: `${executor.tag}` });
+        if (executor) embed.addFields({ name: '👮 Executor', value: `${executor}`, inline: false });
         channel.send({ embeds: [embed] });
     } catch (e) { console.error(e); }
 });
