@@ -1,7 +1,7 @@
 {
-  "name": "discord-guardian-bot",
-  "version": "1.0.0",
-  "description": "Bot de Moderação com IA",
+  "name": "guardian-bot-fixed",
+  "version": "3.5.0",
+  "description": "Bot de Moderação com IA (Versão Corrigida)",
   "main": "index.js",
   "type": "module",
   "scripts": {
