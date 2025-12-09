@@ -20,13 +20,15 @@ const CONFIG = {
     TOKEN: process.env.DISCORD_TOKEN,
     GEMINI_KEY: process.env.GEMINI_API_KEY, 
     
-    // CANAIS
-    ENTRY_CHANNEL: '1445105097796223078',
+    // CANAIS (IDs atualizados conforme solicitado)
+    ENTRY_CHANNEL: '1445105097796223078', 
     EXIT_CHANNEL: '1445105144869032129',
-    COTACAO_CHANNEL: '1446631169054740602',
+    
+    // Agora usando o canal solicitado para cotação
+    COTACAO_CHANNEL: '1445105097796223078',
     
     // CARGOS
-    BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster
+    BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster Atualizado
     
     MIN_AGE_DAYS: 7,
     AUTO_KICK: false,
@@ -37,7 +39,7 @@ const CONFIG = {
 function extrairValor(texto) {
     if (!texto) return null;
     // Remove pontos de milhar, R$, espaços extras
-    const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
+    const clean = texto.toLowerCase().replace(/r$/g, '').replace(/./g, '').replace(/,/g, '.');
     
     // Suporte a 'k' (mil)
     if (clean.includes('k')) {
@@ -192,12 +194,10 @@ O servidor se passa nos EUA.
 `;
 
             const response = await aiClient.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: prompt,
-    config: { systemInstruction: systemPrompt }
-});
-
-await message.reply(response.text || "Não consegui responder isso não, parça.");
+                model: 'gemini-2.5-flash',
+                contents: prompt,
+                config: { systemInstruction: systemPrompt }
+            });
 
             await message.reply(response.text || "Não consegui responder isso não, parça.");
         } catch (error) {
