@@ -1,81 +1,55 @@
+import 'dotenv/config'; // Carrega o .env automaticamente
 import { 
     Client, 
     GatewayIntentBits, 
     Events, 
     EmbedBuilder, 
     Partials, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    PermissionFlagsBits,
-    AuditLogEvent,
     ChannelType
 } from 'discord.js';
 
 import express from 'express';
-import https from 'https';
 import { GoogleGenAI } from "@google/genai";
 
 // =========================================================
-// ⚙️ CONFIGURAÇÃO DE IDS (Edite aqui se não usar .env)
+// 🚨 TRATAMENTO DE ERROS GLOBAL (Para o bot não desligar)
+// =========================================================
+process.on('unhandledRejection', (reason, p) => {
+    console.log(' [Anti-Crash] Erro Rejeitado:', reason);
+});
+process.on('uncaughtException', (err, origin) => {
+    console.log(' [Anti-Crash] Erro Crítico:', err);
+});
+
+// =========================================================
+// ⚙️ CONFIGURAÇÃO
 // =========================================================
 const CONFIG = {
-    // Tokens
     TOKEN: process.env.DISCORD_TOKEN,
-    GEMINI_KEY: process.env.GEMINI_API_KEY, 
+    GEMINI_KEY: process.env.GEMINI_API_KEY,
     
-    // 🆔 CANAIS (Use o comando !debug no Discord para descobrir os IDs corretos)
-    // Se o ID estiver errado, o bot NÃO vai mandar mensagem.
-    ENTRY_CHANNEL: process.env.ENTRY_CHANNEL_ID || 'SUBSTITUA_PELO_ID_CANAL_ENTRADA',
-    EXIT_CHANNEL: process.env.EXIT_CHANNEL_ID || 'SUBSTITUA_PELO_ID_CANAL_SAIDA',
-    COTACAO_CHANNEL: process.env.COTACAO_CHANNEL_ID || 'SUBSTITUA_PELO_ID_CANAL_COTACAO', 
+    // IDs dos Canais (Copie do Discord com botão direito -> Copiar ID)
+    ENTRY_CHANNEL: process.env.ENTRY_CHANNEL_ID || '', 
+    EXIT_CHANNEL: process.env.EXIT_CHANNEL_ID || '',
+    COTACAO_CHANNEL: process.env.COTACAO_CHANNEL_ID || '',
     
-    // 🛡️ Cargos
-    BOOSTER_ROLE_ID: 'SUBSTITUA_PELO_ID_CARGO_BOOSTER', 
-    
-    // ⚙️ Ajustes
-    MIN_AGE_DAYS: 7,
+    BOOSTER_ROLE_ID: process.env.BOOSTER_ROLE_ID || '', 
     PORT: process.env.PORT || 3000
 };
 
 // =========================================================
-// 🛠️ FUNÇÕES AUXILIARES
+// 🧠 IA CLIENT (Google Gemini)
 // =========================================================
-function extrairValorManual(texto) {
-    if (!texto) return null;
-    const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
-    
-    // Tratamento para 'k' (mil) e 'm' (milhão)
-    if (clean.includes('k')) {
-        const match = clean.match(/(\d+(\.\d+)?)k/);
-        return match ? parseFloat(match[1]) * 1000 : null;
-    }
-    if (clean.includes('m')) {
-        const match = clean.match(/(\d+(\.\d+)?)m/);
-        return match ? parseFloat(match[1]) * 1000000 : null;
-    }
-    // Números simples
-    const match = clean.match(/(\d+(\.\d+)?)/);
-    return match ? parseFloat(match[1]) : null;
-}
-
-// =========================================================
-// 🌐 SERVIDOR WEB (Para manter online)
-// =========================================================
-const app = express();
-app.get('/', (req, res) => res.send({ status: 'Online', config_check: { 
-    discord: !!CONFIG.TOKEN, 
-    ai: !!CONFIG.GEMINI_KEY,
-    entry_channel: CONFIG.ENTRY_CHANNEL !== 'SUBSTITUA_PELO_ID_CANAL_ENTRADA'
-}}));
-app.listen(CONFIG.PORT, () => console.log(`🌐 Web Server rodando na porta ${CONFIG.PORT}`));
-
-// =========================================================
-// 🧠 IA CLIENT
-// =========================================================
-let aiClient;
+let aiClient = null;
 if (CONFIG.GEMINI_KEY) {
-    aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
+    try {
+        aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
+        console.log("🧠 IA Gemini Configurada.");
+    } catch (e) {
+        console.error("❌ Erro ao configurar IA:", e.message);
+    }
+} else {
+    console.log("⚠️ SEM CHAVE DA IA: O bot funcionará apenas com modo manual.");
 }
 
 // =========================================================
@@ -84,218 +58,178 @@ if (CONFIG.GEMINI_KEY) {
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // OBRIGATÓRIO PARA WELCOME
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // OBRIGATÓRIO PARA LER PREÇO
-        GatewayIntentBits.GuildModeration
+        GatewayIntentBits.GuildMembers,      // Necessário para Boas-vindas
+        GatewayIntentBits.GuildMessages,     // Necessário para Ler mensagens
+        GatewayIntentBits.MessageContent,    // Necessário para Ler o TEXTO das mensagens
     ],
     partials: [Partials.GuildMember, Partials.User, Partials.Channel, Partials.Message]
 });
 
-// ✅ INICIALIZAÇÃO E TESTE DE CANAIS
-client.once(Events.ClientReady, async (c) => {
-    console.log(`✅ Bot logado como: ${c.user.tag}`);
-    console.log('------------------------------------------------');
-    console.log('🔍 TESTE DE CANAIS (Verifique o Console):');
-
-    const testChannel = async (name, id) => {
-        if (!id || id.includes('SUBSTITUA')) {
-            console.log(`❌ ${name}: ID não configurado.`);
-            return;
-        }
-        try {
-            const ch = await client.channels.fetch(id);
-            console.log(`✅ ${name}: OK (${ch.name}) [ID: ${id}]`);
-        } catch (e) {
-            console.log(`❌ ${name}: NÃO ENCONTRADO. O ID ${id} está errado ou o bot não tem permissão.`);
-        }
-    };
-
-    await testChannel('Canal Entrada', CONFIG.ENTRY_CHANNEL);
-    await testChannel('Canal Saída', CONFIG.EXIT_CHANNEL);
-    await testChannel('Canal Cotação', CONFIG.COTACAO_CHANNEL);
-    console.log('------------------------------------------------');
+// ✅ INICIALIZAÇÃO
+client.once(Events.ClientReady, (c) => {
+    console.log(`✅ ESTOU ONLINE! Logado como: ${c.user.tag}`);
+    console.log(`📡 Monitorando canais...`);
+    console.log(`   - Cotação: ${CONFIG.COTACAO_CHANNEL || 'Não configurado'}`);
+    console.log(`   - Entrada: ${CONFIG.ENTRY_CHANNEL || 'Não configurado'}`);
+    console.log(`   - Saída:   ${CONFIG.EXIT_CHANNEL || 'Não configurado'}`);
 });
 
-// 📨 EVENTO DE MENSAGEM (COTAÇÃO & CHAT)
+// 📨 EVENTO DE MENSAGENS
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // 🔧 COMANDO DE DEBUG (Use isso para pegar os IDs certos!)
+    // COMANDO DE TESTE SIMPLES
+    if (message.content === '!ping') {
+        return message.reply(`🏓 Pong! Estou vivo. ID deste canal: `${message.channel.id}``);
+    }
+
+    // COMANDO DE DEBUG (Ajuda a achar IDs)
     if (message.content === '!debug') {
-        const isForum = message.channel.type === ChannelType.GuildForum;
-        const isThread = message.channel.isThread();
-        
-        const debugInfo = `
-🔍 **DIAGNÓSTICO DO CANAL**
---------------------------------
-**Nome:** `${message.channel.name}`
-**ID Deste Canal:** ``${message.channel.id}``
-**ID do Pai (Categoria/Fórum):** ``${message.channel.parentId || 'Nenhum'}``
-**É Tópico?** ${isThread ? 'Sim' : 'Não'}
-**Tipo:** ${message.channel.type}
---------------------------------
-**Configurado no Código:**
-Cotação ID: ``${CONFIG.COTACAO_CHANNEL}``
-Entrada ID: ``${CONFIG.ENTRY_CHANNEL}``
-`;
-        return message.reply(debugInfo);
+        return message.reply({
+            content: `📊 **DIAGNÓSTICO**
+ID do Canal Atual: `${message.channel.id}`
+Tipo: ${message.channel.type}
+Permissão de Ver Membros: ${message.guild.members.me.permissions.has('ViewChannel') ? 'Sim' : 'Não'}`
+        });
     }
 
     // LÓGICA DE COTAÇÃO
-    // Funciona se a mensagem for no canal configurado OU em um tópico filho do canal configurado
-    const isCotacaoChannel = message.channel.id === CONFIG.COTACAO_CHANNEL;
-    const isThreadInCotacao = message.channel.parentId === CONFIG.COTACAO_CHANNEL;
+    // Verifica se está no canal certo (ou em tópicos desse canal)
+    const isCotacao = message.channel.id === CONFIG.COTACAO_CHANNEL || message.channel.parentId === CONFIG.COTACAO_CHANNEL;
 
-    if (isCotacaoChannel || isThreadInCotacao) {
-        // Tenta extrair um número básico antes de gastar recursos
+    if (isCotacao) {
+        // Filtro básico para não responder "oi"
         const temNumero = /d/.test(message.content);
-        if (!temNumero && !message.content.toLowerCase().includes('k')) return; 
+        const temK = message.content.toLowerCase().includes('k');
+        if (!temNumero && !temK) return;
 
-        console.log(`📝 Analisando possível cotação de: ${message.author.tag}`);
-        
+        console.log(`📝 Cotação solicitada por ${message.author.username}`);
+
         try {
             await message.channel.sendTyping();
+            let valorEncontrado = 0;
 
-            let valorVeiculo = 0;
-            let textToAnalyze = message.content;
-            
-            // Se for tópico, inclui o nome do tópico na análise
-            if (message.channel.isThread()) textToAnalyze += " " + message.channel.name;
-
-            // 1. TENTATIVA COM IA
+            // 1. Tenta usar a IA se disponível
             if (aiClient) {
                 try {
-                    const result = await aiClient.models.generateContent({ 
-                        model: 'gemini-2.5-flash', 
-                        contents: `Apenas extraia o valor numérico total de venda deste texto. Se for '50k' retorne 50000. Retorne APENAS números, sem texto. Texto: "${textToAnalyze}"`
+                    const model = aiClient.models;
+                    const result = await model.generateContent({
+                        model: 'gemini-2.5-flash',
+                        contents: `Extraia apenas o valor numérico de venda deste texto. Exemplo: "vendo carro por 50k" retorna 50000. Retorne APENAS O NÚMERO puro. Texto: "${message.content}"`
                     });
-                    const numbers = result.text?.replace(/[^0-9]/g, '');
-                    if (numbers) valorVeiculo = parseInt(numbers);
-                } catch (e) { console.error("Falha IA (ignorada):", e.message); }
+                    const text = result.text ? result.text.trim() : "";
+                    const numbers = text.replace(/[^0-9]/g, '');
+                    if (numbers) valorEncontrado = parseInt(numbers);
+                } catch (err) {
+                    console.error("Falha na IA (usando manual):", err.message);
+                }
             }
 
-            // 2. FALLBACK MANUAL (Se IA falhar ou retornar 0)
-            if (!valorVeiculo || valorVeiculo === 0) {
-                valorVeiculo = extrairValorManual(textToAnalyze) || 0;
+            // 2. Fallback Manual (Se IA falhar ou não achar nada)
+            if (!valorEncontrado) {
+                const clean = message.content.toLowerCase().replace(/k/g, '000').replace(/[^0-9]/g, '');
+                if (clean) valorEncontrado = parseInt(clean);
             }
 
-            // Se ainda assim for 0 ou muito baixo, ignora (evita spam em conversa normal)
-            if (valorVeiculo < 100) return;
+            // Se ainda for 0, ignora
+            if (!valorEncontrado || valorEncontrado < 100) return;
 
-            // CÁLCULO
+            // Cálculos
             const isBooster = message.member?.roles.cache.has(CONFIG.BOOSTER_ROLE_ID);
-            const taxaPercent = isBooster ? 0.10 : 0.15; // 10% ou 15%
-            const valorTaxa = valorVeiculo * taxaPercent;
-            const valorFinal = valorVeiculo + valorTaxa;
+            const taxa = isBooster ? 0.10 : 0.15;
+            const valorTaxa = valorEncontrado * taxa;
+            const valorFinal = valorEncontrado + valorTaxa;
 
-            // FORMATAÇÃO
-            const fmt = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            // Formatação
+            const BRL = v => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
             const embed = new EmbedBuilder()
                 .setColor(isBooster ? 0xFF73FA : 0x2B2D31)
-                .setTitle(isBooster ? '💎 Cotação Especial (Booster)' : '📋 Cotação Automática')
-                .setDescription(`Cálculo para **${message.author}**`)
+                .setTitle('🚗 Cotação Automática')
                 .addFields({
-                    name: 'Valores Calculados',
+                    name: 'Detalhes da Venda',
                     value: ```yaml
-Veículo:   ${fmt(valorVeiculo)}
-Taxa (${isBooster ? '10%' : '15%'}):   + ${fmt(valorTaxa)}
-TOTAL:     ${fmt(valorFinal)}
+Valor Veículo: ${BRL(valorEncontrado)}
+Taxa (${taxa * 100}%):   + ${BRL(valorTaxa)}
+TOTAL:         ${BRL(valorFinal)}
 ```,
                     inline: false
                 })
-                .setFooter({ text: 'Sistema Automático • Guardian' })
-                .setTimestamp();
+                .setFooter({ text: isBooster ? 'Cliente VIP (Booster)' : 'Taxa Padrão (15%)' });
 
             await message.reply({ embeds: [embed] });
-            console.log("✅ Cotação enviada com sucesso.");
 
         } catch (error) {
-            console.error("❌ ERRO FATAL AO ENVIAR COTAÇÃO:", error);
-            // Não enviamos mensagem de erro no chat para não poluir, mas logamos no console
-        }
-    }
-
-    // CHATBOT COM IA (Mencionar o bot)
-    if (message.mentions.has(client.user)) {
-        await message.channel.sendTyping();
-        try {
-            const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-            if (!aiClient) return message.reply("Minha IA está desligada (Sem API Key).");
-            
-            const response = await aiClient.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: { systemInstruction: "Você é um assistente útil do servidor." }
-            });
-            await message.reply(response.text.slice(0, 1999));
-        } catch (err) {
-            console.error(err);
-            message.reply("Tive um problema para pensar na resposta.");
+            console.error("Erro ao enviar cotação:", error);
+            // Tenta enviar mensagem de erro simples
+            message.reply("❌ Ocorreu um erro ao calcular.").catch(() => {});
         }
     }
 });
 
 // 👋 EVENTO DE ENTRADA (WELCOME)
 client.on(Events.GuildMemberAdd, async (member) => {
-    console.log(`👤 NOVO MEMBRO DETECTADO: ${member.user.tag}`);
-
-    if (!CONFIG.ENTRY_CHANNEL || CONFIG.ENTRY_CHANNEL.includes('SUBSTITUA')) {
-        return console.log("⚠️ Canal de Entrada não configurado no código.");
-    }
+    console.log(`👤 ENTROU: ${member.user.tag}`);
+    if (!CONFIG.ENTRY_CHANNEL) return;
 
     try {
-        const channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL).catch(e => null);
-        
-        if (!channel) {
-            console.error(`❌ ERRO: Não consegui achar o canal de entrada ID ${CONFIG.ENTRY_CHANNEL}. Verifique se o ID está certo e se o bot tem permissão de ver o canal.`);
-            return;
-        }
+        const channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL);
+        if (!channel) return console.log("❌ Canal de Entrada não encontrado.");
 
-        const contaRecente = (Date.now() - member.user.createdTimestamp) < (CONFIG.MIN_AGE_DAYS * 86400000);
-        
+        const diasCriacao = Math.floor((Date.now() - member.user.createdTimestamp) / (1000 * 60 * 60 * 24));
+        const isNew = diasCriacao < 7;
+
         const embed = new EmbedBuilder()
-            .setColor(contaRecente ? 0xED4245 : 0x57F287)
-            .setTitle(contaRecente ? '⚠️ Conta Nova' : '👋 Bem-vindo(a)!')
-            .setDescription(`Olá ${member}! Bem-vindo ao servidor.`)
-            .setThumbnail(member.user.displayAvatarURL())
+            .setColor(isNew ? 0xED4245 : 0x57F287)
+            .setTitle(isNew ? '🚨 Conta Recente' : '👋 Bem-vindo(a)!')
+            .setDescription(`${member} entrou no servidor.`)
             .addFields(
-                { name: 'Conta Criada', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: true },
+                { name: 'Idade da Conta', value: `${diasCriacao} dias`, inline: true },
                 { name: 'ID', value: member.id, inline: true }
-            );
+            )
+            .setThumbnail(member.user.displayAvatarURL());
 
-        await channel.send({ 
-            content: contaRecente ? '||@here|| 🚨 **Alerta de Segurança**' : `${member}`,
-            embeds: [embed] 
-        });
-        console.log("✅ Mensagem de boas-vindas enviada.");
-
-    } catch (error) {
-        console.error("❌ ERRO NO WELCOME:", error);
+        await channel.send({ content: `${member}`, embeds: [embed] });
+    } catch (e) {
+        console.error("Erro no Welcome:", e);
     }
 });
 
 // 📤 EVENTO DE SAÍDA
 client.on(Events.GuildMemberRemove, async (member) => {
-    console.log(`👋 MEMBRO SAIU: ${member.user.tag}`);
-    
-    if (!CONFIG.EXIT_CHANNEL || CONFIG.EXIT_CHANNEL.includes('SUBSTITUA')) return;
+    console.log(`📤 SAIU: ${member.user.tag}`);
+    if (!CONFIG.EXIT_CHANNEL) return;
 
     try {
-        const channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL).catch(() => null);
+        const channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL);
         if (channel) {
-            await channel.send({
-                embeds: [new EmbedBuilder()
-                    .setColor(0xFEE75C)
-                    .setTitle('Saída')
-                    .setDescription(`**${member.user.tag}** deixou o servidor.`)
-                    .setFooter({ text: `ID: ${member.id}` })
-                    .setTimestamp()
-                ]
-            });
+            const embed = new EmbedBuilder()
+                .setColor(0xFEE75C)
+                .setTitle('👋 Saída')
+                .setDescription(`**${member.user.tag}** deixou o servidor.`)
+                .setFooter({ text: `ID: ${member.id}` })
+                .setTimestamp();
+            await channel.send({ embeds: [embed] });
         }
-    } catch (e) { console.error("Erro no Leave:", e); }
+    } catch (e) {
+        console.error("Erro no Leave:", e);
+    }
 });
 
-client.login(CONFIG.TOKEN);
+// SERVIDOR WEB PARA MANTER ONLINE
+const app = express();
+app.get('/', (req, res) => res.send('Bot is Running'));
+app.listen(CONFIG.PORT, () => console.log('🌐 Webserver OK'));
+
+// LOGIN COM TRATAMENTO DE ERRO DE INTENTS
+client.login(CONFIG.TOKEN).catch(error => {
+    if (error.code === 'DisallowedIntents') {
+        console.error("\n\n🔴 ERRO CRÍTICO: INTENTS DESATIVADOS! 🔴");
+        console.error("Você precisa ir no Discord Developer Portal -> Bot -> Privileged Gateway Intents");
+        console.error("E ATIVAR AS 3 OPÇÕES: Presence Intent, Server Members Intent, Message Content Intent.\n\n");
+    } else if (error.code === 'TokenInvalid') {
+        console.error("\n\n🔴 ERRO: TOKEN INVÁLIDO. Verifique seu arquivo .env\n\n");
+    } else {
+        console.error("Erro ao logar:", error);
+    }
+});
