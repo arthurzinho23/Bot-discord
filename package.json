@@ -1,18 +1,10 @@
 {
-  "name": "guardian-bot-fixed",
-  "version": "3.5.0",
-  "description": "Bot de Moderação com IA (Versão Corrigida)",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "name": "guardian-bot",
+  "version": "3.6.0",
   "dependencies": {
-    "discord.js": "^14.16.3",
-    "express": "^4.21.1",
-    "@google/genai": "*"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "@google/genai": "^0.1.0"
   }
 }
