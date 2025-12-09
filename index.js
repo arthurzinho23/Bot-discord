@@ -24,7 +24,7 @@ const CONFIG = {
     // CANAIS
     ENTRY_CHANNEL: '1445105097796223078',
     EXIT_CHANNEL: '1445105144869032129',
-    COTACAO_CHANNEL: '1446631169054740602', 
+    COTACAO_CHANNEL: '1447967291814973655', 
     
     // CARGOS
     BOOSTER_ROLE_ID: '1441086318229848185', 
@@ -53,7 +53,7 @@ function extrairValorManual(texto) {
 
 // --- SERVIDOR WEB ---
 const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '3.2.0 Quota-Handling' }));
+app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '3.4.0 Final' }));
 app.listen(CONFIG.PORT, () => {
     console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
     const renderUrl = process.env.RENDER_EXTERNAL_URL;
@@ -147,7 +147,6 @@ client.on(Events.MessageCreate, async (message) => {
                 const aiValue = parseInt(extractedText);
                 if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
             } catch (e) { 
-                // Se der erro de cota (429), ignora silenciosamente e usa fallback manual
                 if (e.message?.includes('429') || e.status === 429) {
                     console.warn("IA Cotação: Limite atingido, usando manual.");
                 }
@@ -164,7 +163,6 @@ client.on(Events.MessageCreate, async (message) => {
             const taxa = valorVeiculo * (porcentagem / 100);
             const valorFinal = valorVeiculo + taxa;
 
-            // Formatação Monetária
             const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
             const cor = isBooster ? 0xFF73FA : 0x2B2D31;
@@ -176,7 +174,7 @@ client.on(Events.MessageCreate, async (message) => {
                 .setTitle(titulo)
                 .setDescription(`Cálculo de venda gerado para **${message.author}**.
 ${isBooster ? '✨ **Taxa Reduzida Aplicada!**' : ''}`)
-                .setThumbnail('https://cdn-icons-png.flaticon.com/512/3097/3097144.png') // Ícone Genérico de Carro
+                .setThumbnail('https://cdn-icons-png.flaticon.com/512/3097/3097144.png')
                 .addFields({
                     name: '🧾 Nota Fiscal Eletrônica',
                     value: ```yaml
@@ -196,6 +194,9 @@ VALOR FINAL:     R$ ${fmt(valorFinal)}
 
     // 🤖 CHAT COM IA
     if (message.mentions.has(client.user)) {
+        // 🛑 PROTEÇÃO CONTRA PINGS EM MASSA
+        if (message.mentions.everyone) return;
+
         if (!aiClient) return message.reply("⚠️ **Erro:** API Key não configurada.");
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
         if (!prompt) return message.reply("❓ Manda um texto aí junto com a menção.");
@@ -211,7 +212,6 @@ VALOR FINAL:     R$ ${fmt(valorFinal)}
             await message.reply(response.text || "Não entendi nada, parça.");
         } catch (error) { 
             console.error("Erro Chat IA:", error.message);
-            // Tratamento específico para Erro de Cota (429)
             if (error.message?.includes('429') || error.message?.includes('quota') || error.status === 429) {
                  return message.reply("⏳ **Calma lá, muita conversa!** Atingi o limite gratuito da IA. Tenta de novo em 1 minuto.");
             }
