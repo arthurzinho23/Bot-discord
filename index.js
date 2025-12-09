@@ -17,22 +17,15 @@ import https from 'https';
 import { GoogleGenAI } from "@google/genai";
 
 // =========================================================
-// ⚙️ CONFIGURAÇÃO (Preencha os IDs corretamente)
+// ⚙️ CONFIGURAÇÃO
 // =========================================================
 const CONFIG = {
-    // Tokens (Pegos das Variáveis de Ambiente)
     TOKEN: process.env.DISCORD_TOKEN,
     GEMINI_KEY: process.env.GEMINI_API_KEY, 
-    
-    // 🆔 IDs dos Canais (Configure no .env ou substitua aqui)
     ENTRY_CHANNEL: process.env.ENTRY_CHANNEL_ID || '1445105097796223078',
     EXIT_CHANNEL: process.env.EXIT_CHANNEL_ID || '1445105144869032129',
     COTACAO_CHANNEL: process.env.COTACAO_CHANNEL_ID || '1447967291814973655', 
-    
-    // 🛡️ Cargos
     BOOSTER_ROLE_ID: '1441086318229848185', 
-    
-    // ⚙️ Ajustes
     MIN_AGE_DAYS: 7,
     PORT: process.env.PORT || 3000
 };
@@ -41,361 +34,187 @@ const CONFIG = {
 // 🛠️ FUNÇÕES AUXILIARES
 // =========================================================
 function extrairValorManual(texto) {
-    if (!texto) return null;
+    if (!texto) return 0;
     const clean = texto.toLowerCase().replace(/r\$/g, '').replace(/\./g, '').replace(/,/g, '.');
-    
-    // Tratamento para 'k' (mil) e 'm' (milhão)
-    if (clean.includes('k')) {
-        const match = clean.match(/(\d+(\.\d+)?)k/);
-        return match ? parseFloat(match[1]) * 1000 : null;
-    }
-    if (clean.includes('m')) {
-        const match = clean.match(/(\d+(\.\d+)?)m/);
-        return match ? parseFloat(match[1]) * 1000000 : null;
-    }
-    // Números simples
-    const match = clean.match(/(\d+(\.\d+)?)/);
-    return match ? parseFloat(match[1]) : null;
+    if (clean.includes('k')) return (parseFloat(clean.match(/(\d+(\.\d+)?)k/)?.[1] || 0) * 1000);
+    if (clean.includes('m')) return (parseFloat(clean.match(/(\d+(\.\d+)?)m/)?.[1] || 0) * 1000000);
+    return parseFloat(clean.match(/(\d+(\.\d+)?)/)?.[1] || 0);
 }
 
+const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 // =========================================================
-// 🌐 SERVIDOR WEB (Para manter online no Render)
+// 🌐 SERVIDOR WEB
 // =========================================================
 const app = express();
-app.get('/', (req, res) => res.send({ 
-    status: 'Guardian Online', 
-    version: '3.5.0 Fix',
-    checks: {
-        discord: !!CONFIG.TOKEN,
-        ai: !!CONFIG.GEMINI_KEY
-    }
-}));
+app.get('/', (req, res) => res.send({ status: 'Online', version: '3.6.0' }));
 app.listen(CONFIG.PORT, () => {
-    console.log(`🌐 Web Server rodando na porta ${CONFIG.PORT}`);
-    // Self-ping para evitar hibernação (se houver URL externa)
-    const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) {
-        setInterval(() => {
-            https.get(renderUrl, () => {}).on('error', () => {});
-        }, 5 * 60 * 1000);
+    if (process.env.RENDER_EXTERNAL_URL) {
+        setInterval(() => https.get(process.env.RENDER_EXTERNAL_URL, () => {}).on('error', () => {}), 300000);
     }
 });
 
 // =========================================================
-// 🧠 INTELIGÊNCIA ARTIFICIAL
+// 🤖 CLIENTE
 // =========================================================
 let aiClient;
-if (CONFIG.GEMINI_KEY) {
-    try {
-        aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
-        console.log('🧠 IA Gemini Conectada.');
-    } catch (err) { console.error('❌ Erro ao conectar IA:', err.message); }
-} else {
-    console.warn('⚠️ AVISO: GEMINI_API_KEY não encontrada. Funcionalidades de IA desativadas.');
-}
+try { if (CONFIG.GEMINI_KEY) aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY }); } catch (e) {}
 
-// =========================================================
-// 🤖 CLIENTE DISCORD
-// =========================================================
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers, // ⚠️ REQUER "SERVER MEMBERS INTENT" NO DEV PORTAL
+        GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, // ⚠️ REQUER "MESSAGE CONTENT INTENT" NO DEV PORTAL
-        GatewayIntentBits.GuildModeration // Para ban/kick/audit logs
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildModeration
     ],
-    partials: [Partials.GuildMember, Partials.User, Partials.Channel, Partials.Message]
+    partials: [Partials.GuildMember, Partials.User, Partials.Channel]
 });
 
-// ✅ EVENTO: PRONTO
-client.once(Events.ClientReady, async (c) => {
-    console.log(`✅ Bot logado como: ${c.user.tag}`);
-    console.log('🔍 Verificando canais configurados...');
-
-    const checkChannel = async (name, id) => {
-        if (!id) return console.log(`⚪ ${name} não configurado.`);
-        try {
-            const channel = await client.channels.fetch(id);
-            if (channel) console.log(`✅ ${name}: Encontrado (${channel.name})`);
-        } catch (e) {
-            console.error(`❌ ${name}: NÃO ENCONTRADO (ID: ${id}). Verifique o ID!`);
-        }
-    };
-
-    await checkChannel('Canal Entrada', CONFIG.ENTRY_CHANNEL);
-    await checkChannel('Canal Saída', CONFIG.EXIT_CHANNEL);
-    await checkChannel('Canal Cotação', CONFIG.COTACAO_CHANNEL);
-});
-
-// 📨 EVENTO: MENSAGEM
 client.on(Events.MessageCreate, async (message) => {
     if (message.author.bot) return;
 
-    // 🔧 COMANDO DE DEBUG (Para descobrir IDs)
-    if (message.content === '!debug') {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        return message.reply({
-            content: `📊 **Informações do Canal:**\nID Deste Canal: ``${message.channel.id}``\nID da Categoria/Fórum Pai: ``${message.channel.parentId || 'Nenhum'}``\n\n⚙️ **Configuração Atual:**\nCotação Esperada: ``${CONFIG.COTACAO_CHANNEL}```
-        });
-    }
-
-    // 🆕 COMANDO !novo (Cria tópicos em Fórum)
+    // !novo para criar tópico manual
     if (message.content.startsWith('!novo')) {
         const args = message.content.slice(6).split('|');
-        if (args.length < 2) return message.reply('❌ Uso: `!novo Título | Descrição...`');
-        
+        if (args.length < 2) return;
         try {
-            const forumChannel = message.guild.channels.cache.get(CONFIG.COTACAO_CHANNEL);
-            if (!forumChannel || forumChannel.type !== ChannelType.GuildForum) {
-                // Tenta buscar se não estiver em cache
-                const fetched = await message.guild.channels.fetch(CONFIG.COTACAO_CHANNEL).catch(() => null);
-                if (!fetched || fetched.type !== ChannelType.GuildForum) {
-                    return message.reply(`❌ Canal de Fórum não encontrado ou ID incorreto (${CONFIG.COTACAO_CHANNEL}).`);
-                }
-            }
-            
-            await forumChannel.threads.create({
+            const forum = await message.guild.channels.fetch(CONFIG.COTACAO_CHANNEL);
+            if (forum) await forum.threads.create({
                 name: args[0].trim(),
-                message: { content: `Postado por: ${message.author}\n\n${args[1].trim()}` }
+                message: { content: `${message.author}: ${args[1].trim()}` }
             });
             message.delete().catch(() => {});
-        } catch (error) { 
-            console.error(error);
-            message.reply('❌ Erro ao criar tópico. Verifique as permissões do bot.'); 
-        }
+        } catch (e) {}
         return;
     }
 
-    // 💰 LÓGICA DE COTAÇÃO
-    // Verifica se a mensagem é no canal exato OU em um tópico dentro do canal de fórum configurado
-    const isCotacao = message.channel.id === CONFIG.COTACAO_CHANNEL || message.channel.parentId === CONFIG.COTACAO_CHANNEL;
-
-    if (isCotacao) {
-        console.log(`📩 Nova mensagem em canal de cotação: ${message.content}`);
-        
-        let valorVeiculo = 0;
-        let textToAnalyze = message.content;
-        
-        // Se for um tópico de fórum, pega o título também para contexto
-        if (message.channel.isThread()) {
-            textToAnalyze = `${message.channel.name} ${message.content}`;
-        }
-
-        // Tenta via IA Primeiro
+    // Cotação
+    if (message.channel.id === CONFIG.COTACAO_CHANNEL || message.channel.parentId === CONFIG.COTACAO_CHANNEL) {
+        let valor = 0;
         if (aiClient) {
             try {
-                const extractionPrompt = `
-                Analise este texto de venda de veículo e extraia o PREÇO pedido.
-                Retorne APENAS números. Exemplo: "vendo por 50k" -> retorna 50000.
-                Se tiver "m", multiplique por milhão. Se tiver "k", por mil.
-                Texto: "${textToAnalyze}"
-                `;
-                
-                const result = await aiClient.models.generateContent({ 
+                const r = await aiClient.models.generateContent({ 
                     model: 'gemini-2.5-flash', 
-                    contents: extractionPrompt 
+                    contents: `Extract number from: "${message.content}". Return 0 if none.` 
                 });
-                
-                const extractedText = result.text ? result.text.trim().replace(/[^0-9]/g, '') : '0';
-                const aiValue = parseInt(extractedText);
-                if (!isNaN(aiValue) && aiValue > 0) valorVeiculo = aiValue;
-            } catch (e) { 
-                console.error("Erro IA Cotação:", e.message);
-            }
+                valor = parseInt(r.text?.replace(/[^0-9]/g, '') || '0');
+            } catch (e) {}
         }
+        if (valor === 0) valor = extrairValorManual(message.content);
 
-        // Fallback Manual
-        if (valorVeiculo === 0) {
-            valorVeiculo = extrairValorManual(textToAnalyze) || 0;
-        }
-
-        // Se achou valor, gera a cotação
-        if (valorVeiculo > 0) {
-            await message.channel.sendTyping();
-
+        if (valor > 0) {
             const isBooster = message.member.roles.cache.has(CONFIG.BOOSTER_ROLE_ID);
-            const porcentagem = isBooster ? 10 : 15;
-            const taxa = valorVeiculo * (porcentagem / 100);
-            const valorFinal = valorVeiculo + taxa;
-
-            const fmt = (v) => v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            const cor = isBooster ? 0xFF73FA : 0x2B2D31;
-
+            const taxa = valor * (isBooster ? 0.10 : 0.15);
+            
             const embed = new EmbedBuilder()
-                .setColor(cor)
-                .setTitle(isBooster ? '💎 Cotação Especial (Booster)' : '📋 Cotação de Veículo')
-                .setDescription(`Cálculo gerado para **${message.author}**.
-${isBooster ? '✨ **Taxa de 10% Aplicada!**' : ''}`)
-                .setThumbnail('https://cdn-icons-png.flaticon.com/512/3097/3097144.png')
+                .setColor(isBooster ? 0xFF73FA : 0x2B2D31)
+                .setTitle('Cotação Automática')
+                .setDescription(`Análise financeira gerada para ${message.author}.`)
                 .addFields({
-                    name: '🧾 Detalhes Financeiros',
-                    value: ```yaml
-Valor Base:      R$ ${fmt(valorVeiculo)}
-Taxa (${porcentagem}%):        + R$ ${fmt(taxa)}
-------------------------------
-TOTAL:           R$ ${fmt(valorFinal)}
-```,
+                    name: '📋 Demonstrativo',
+                    value: ```yaml\nBase:  R$ ${fmt(valor)}\nTaxa:  R$ ${fmt(taxa)} (${isBooster ? '10%' : '15%'})\nTotal: R$ ${fmt(valor + taxa)}\n```,
                     inline: false
                 })
-                .setFooter({ text: 'Guardian Systems • Vendas Automáticas' })
+                .setFooter({ text: 'Guardian AI Systems' })
                 .setTimestamp();
 
-            await message.reply({ embeds: [embed] }).catch(err => console.error("Erro ao enviar cotação:", err));
+            try {
+                if (message.channel.isThread()) {
+                    await message.reply({ embeds: [embed] });
+                } else {
+                    const thread = await message.startThread({ name: `Cotação - ${message.author.username}`, autoArchiveDuration: 60 });
+                    await thread.send({ content: `${message.author}`, embeds: [embed] });
+                }
+            } catch (e) { await message.reply({ embeds: [embed] }).catch(() => {}); }
         }
     }
 
-    // 🤖 CHATBOT
-    if (message.mentions.has(client.user) && !message.author.bot) {
-        if (message.mentions.everyone) return;
-        
-        await message.channel.sendTyping();
-        const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-
-        if (!aiClient) return message.reply("❌ IA não configurada (sem API Key).");
-
+    // Chatbot
+    if (message.mentions.has(client.user) && aiClient) {
+        message.channel.sendTyping();
         try {
-            const chatResponse = await aiClient.models.generateContent({
+            const r = await aiClient.models.generateContent({
                 model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: {
-                    systemInstruction: "Você é o Guardian, um bot de Discord útil e levemente sarcástico. Responda de forma concisa."
-                }
+                contents: message.content.replace(/<@!?[0-9]+>/g, '').trim()
             });
-            await message.reply(chatResponse.text || "🤔 Fiquei sem palavras.");
-        } catch (error) {
-            console.error("Erro Chat IA:", error);
-            message.reply("😵‍💫 Tive um erro interno.");
-        }
+            message.reply(r.text);
+        } catch (e) {}
     }
 });
 
-// 👋 EVENTO: ENTRADA (WELCOME)
 client.on(Events.GuildMemberAdd, async member => {
-    console.log(`👤 Entrou: ${member.user.tag}`);
-    
-    if (!CONFIG.ENTRY_CHANNEL) return console.log("⚠️ Canal de entrada não definido.");
-    
-    try {
-        const channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL).catch(() => null);
-        if (!channel || !channel.isTextBased()) return console.error(`❌ Canal de entrada inválido ou inacessível (ID: ${CONFIG.ENTRY_CHANNEL})`);
+    if (!CONFIG.ENTRY_CHANNEL) return;
+    const channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL).catch(() => null);
+    if (!channel) return;
 
-        const diffDays = Math.floor((Date.now() - member.user.createdAt) / 86400000);
-        const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
-        const creationDate = member.user.createdAt.toLocaleDateString('pt-BR');
+    const created = Math.floor(member.user.createdTimestamp / 1000);
+    const days = Math.floor((Date.now() - member.user.createdAt) / 86400000);
+    const isSus = days < CONFIG.MIN_AGE_DAYS;
 
-        const embed = new EmbedBuilder()
-            .setColor(isSuspicious ? 0xED4245 : 0x57F287)
-            .setAuthor({ name: 'Registro de Entrada', iconURL: member.guild.iconURL() })
-            .setTitle(isSuspicious ? '🚨 ALERTA DE SEGURANÇA' : '✅ Novo Membro')
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .setDescription(isSuspicious 
-                ? `**ATENÇÃO:** A conta ${member} foi criada há apenas ${diffDays} dias.` 
-                : `Bem-vindo(a) ${member} ao servidor!`)
-            .addFields(
-                { name: '🆔 ID', value: ```${member.id}```, inline: true },
-                { name: '📅 Criado em', value: `${creationDate}`, inline: true }
-            )
-            .setFooter({ text: `Membro #${member.guild.memberCount}` })
-            .setTimestamp();
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: 'Guardian Security', iconURL: member.guild.iconURL() })
+        .setTitle(isSus ? '🚨 ALERTA DE RISCO' : '📥 Entrada de Membro')
+        .setDescription(`O usuário ${member} ingressou no servidor.`)
+        .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+        .setColor(isSus ? 0xED4245 : 0x57F287)
+        .addFields(
+            { name: 'Conta Criada', value: `<t:${created}:f>\n(<t:${created}:R>)`, inline: false },
+            { name: 'Status da Conta', value: isSus ? '⚠️ **ALTO RISCO (Recente)**' : '✅ Regular', inline: true }
+        )
+        .setFooter({ text: `ID: ${member.id}` })
+        .setTimestamp();
 
-        // Botões de ação rápida para contas suspeitas
-        const rows = [];
-        if (isSuspicious) {
-            rows.push(new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
-            ));
-        }
+    const rows = [];
+    if (isSus) {
+        rows.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
+        ));
+    }
 
-        await channel.send({ 
-            content: isSuspicious ? '||@here|| ⚠️ **Conta Recente Detectada**' : null, 
-            embeds: [embed], 
-            components: rows 
-        }).catch(err => console.error("Erro ao enviar Welcome:", err));
-
-    } catch (e) { console.error("Erro geral no Welcome:", e); }
+    channel.send({ content: isSus ? '@here' : null, embeds: [embed], components: rows }).catch(() => {});
 });
 
-// 📤 EVENTO: SAÍDA (LEAVE)
 client.on(Events.GuildMemberRemove, async member => {
-    console.log(`👋 Saiu: ${member.user.tag}`);
-
     if (!CONFIG.EXIT_CHANNEL) return;
+    const channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL).catch(() => null);
+    if (!channel) return;
+
+    let reason = 'Saída Voluntária';
+    let color = 0xFEE75C;
 
     try {
-        const channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL).catch(() => null);
-        if (!channel || !channel.isTextBased()) return console.error(`❌ Canal de saída inválido (ID: ${CONFIG.EXIT_CHANNEL})`);
-
-        // Tenta descobrir se foi Kick/Ban consultando Audit Logs
-        // Requer permissão "View Audit Log"
-        let reason = 'Saiu voluntariamente';
-        let color = 0xFEE75C; // Amarelo
-        let title = 'Saída de Membro';
-        let executor = null;
-
-        try {
-            const logs = await member.guild.fetchAuditLogs({ limit: 1, type: null });
-            const log = logs.entries.first();
-            
-            // Verifica se o log é recente (últimos 10 seg) e se o alvo é o membro que saiu
-            if (log && log.target && log.target.id === member.id && (Date.now() - log.createdTimestamp) < 10000) {
-                if (log.action === AuditLogEvent.MemberKick) {
-                    reason = 'Expulso pelo Admin';
-                    title = '👢 Expulsão';
-                    color = 0xE67E22; // Laranja
-                    executor = log.executor;
-                } else if (log.action === AuditLogEvent.MemberBanAdd) {
-                    reason = 'Banido do Servidor';
-                    title = '🚫 Banimento';
-                    color = 0xED4245; // Vermelho
-                    executor = log.executor;
-                }
-            }
-        } catch (e) {
-            console.log("⚠️ Não foi possível ler Audit Logs (Sem permissão?)");
+        const logs = await member.guild.fetchAuditLogs({ limit: 1, type: null });
+        const log = logs.entries.first();
+        if (log && log.target.id === member.id && (Date.now() - log.createdTimestamp) < 10000) {
+            if (log.action === AuditLogEvent.MemberKick) { reason = 'Expulsão (Kick)'; color = 0xE67E22; }
+            if (log.action === AuditLogEvent.MemberBanAdd) { reason = 'Banimento (Ban)'; color = 0xED4245; }
         }
+    } catch (e) {}
 
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setAuthor({ name: 'Log de Saída', iconURL: member.guild.iconURL() })
-            .setTitle(`${title}`)
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-            .setDescription(`**Usuário:** ${member.user.tag}\n**Motivo:** ${reason}`)
-            .setFooter({ text: `ID: ${member.id}` })
-            .setTimestamp();
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: 'Guardian Logs', iconURL: member.guild.iconURL() })
+        .setTitle('📤 Saída de Membro')
+        .setDescription(`**${member.user.tag}** deixou o servidor.\nMotivo: **${reason}**`)
+        .setThumbnail(member.user.displayAvatarURL())
+        .setColor(color)
+        .setFooter({ text: `ID: ${member.id}` })
+        .setTimestamp();
 
-        if (executor) {
-            embed.addFields({ name: '👮 Executor', value: `${executor.tag}`, inline: false });
-        }
-
-        await channel.send({ embeds: [embed] }).catch(err => console.error("Erro ao enviar Leave:", err));
-
-    } catch (e) { console.error("Erro geral no Leave:", e); }
+    channel.send({ embeds: [embed] }).catch(() => {});
 });
 
-// 🔘 INTERAÇÕES DE BOTÕES
 client.on(Events.InteractionCreate, async i => {
     if (!i.isButton()) return;
+    if (!i.member.permissions.has(PermissionFlagsBits.KickMembers)) return i.reply({ content: 'Sem permissão.', ephemeral: true });
     
-    // Verifica permissão de quem clicou
-    if (!i.member.permissions.has(PermissionFlagsBits.KickMembers)) {
-        return i.reply({ content: '❌ Você não tem permissão para usar isso.', ephemeral: true });
-    }
-
-    const [action, targetId] = i.customId.split('_');
-    
+    const [act, id] = i.customId.split('_');
     try {
-        if (action === 'kick') {
-            await i.guild.members.kick(targetId, 'Ação via Guardian Bot');
-            await i.reply({ content: '✅ Membro expulso com sucesso.', ephemeral: true });
-        } else if (action === 'ban') {
-            await i.guild.members.ban(targetId, { reason: 'Ação via Guardian Bot' });
-            await i.reply({ content: '✅ Membro banido com sucesso.', ephemeral: true });
-        }
-    } catch (error) {
-        i.reply({ content: `❌ Erro ao executar ação: ${error.message}`, ephemeral: true });
-    }
+        if (act === 'kick') await i.guild.members.kick(id);
+        if (act === 'ban') await i.guild.members.ban(id);
+        i.reply({ content: 'Feito.', ephemeral: true });
+    } catch (e) { i.reply({ content: 'Erro.', ephemeral: true }); }
 });
 
 client.login(CONFIG.TOKEN);
