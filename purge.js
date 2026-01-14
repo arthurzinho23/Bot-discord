@@ -15,23 +15,25 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
   // Comando /tur para deletar todos os canais
   if (message.content === '/tur') {
+    // Verifica se o autor tem permissão de administrador
     if (!message.member.permissions.has('Administrator')) {
-      return message.reply('❌ Você não tem permissão de Administrador!');
+      return message.reply('❌ Erro: Comando restrito a administradores.');
     }
 
     const channels = message.guild.channels.cache;
-    console.log(`🧨 Limpando servidor...`);
+    console.log(`🧨 Iniciando limpeza total de ${channels.size} canais...`);
 
     for (const [id, channel] of channels) {
       try {
         await channel.delete();
-        console.log(`Canal #${channel.name} removido.`);
+        console.log(`[-] Canal removido: ${channel.name}`);
       } catch (err) {
-        console.error(`Falha ao deletar ${channel.name}`);
+        console.error(`[!] Erro ao deletar ${channel.name}`);
       }
     }
   }
 });
 
-// Seu token inserido abaixo
-client.login('MTQ0NTExMDg1NjAwOTY1MDQ0OQ.G7i51S.miAhVe_XIBjX4ikwG0dY7RfIf7ZKPLaryur4ao');
+// O código abaixo puxa o token que você configurou no painel da Render
+// Nome da variável no Render: DISCORD_TOKEN
+client.login(process.env.DISCORD_TOKEN);
