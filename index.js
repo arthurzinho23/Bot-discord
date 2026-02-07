@@ -1,38 +1,45 @@
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    Partials, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    REST, 
+    Routes 
+} = require('discord.js');
 const http = require('http');
 require('dotenv').config();
 
-// --- CONFIGURAÇÃO DE AMBIENTE ---
+// --- 1. SERVIDOR DE MONITORAMENTO (CRÍTICO PARA O RENDER) ---
 const PORT = process.env.PORT || 3000;
+
+// O Render precisa que o bot escute uma porta imediatamente para o deploy ser bem-sucedido
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bot de Bate-Ponto Nickyville: Ativo e Operante 🚒');
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log('✅ [RENDER] Servidor HTTP iniciado na porta ' + PORT);
+});
+
+// --- 2. CONFIGURAÇÕES DO BOT ---
 const TOKEN = process.env.DISCORD_TOKEN;
-const APP_URL = process.env.RENDER_EXTERNAL_URL; 
+const APP_URL = process.env.RENDER_EXTERNAL_URL;
 
 if (!TOKEN) {
-    console.error("❌ ERRO: A variável DISCORD_TOKEN não foi configurada!");
-    process.exit(1);
+    console.error("❌ [ERRO] DISCORD_TOKEN não definido! Adicione-o nas Environment Variables do Render.");
+    // No Render, se o processo fechar muito rápido, ele tenta reiniciar. 
+    // Mantemos o servidor vivo para você poder ler o erro no log.
 }
 
-// --- SERVIDOR PARA MANTER ONLINE (HEARTBEAT) ---
-const server = http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot de Ponto Online 🚒');
+// Previne que o bot caia por erros não tratados (comum em redes instáveis)
+process.on('unhandledRejection', error => {
+    console.error('⚠️ [AVISO] Erro não tratado:', error);
 });
 
-server.listen(PORT, () => {
-    console.log('✅ Servidor HTTP pronto na porta ' + PORT);
-});
-
-// "Tic" a cada 10 minutos para evitar hibernação
-setInterval(() => {
-    console.log('💓 Heartbeat: Bot está vivo e operante.');
-    if (APP_URL) {
-        http.get(APP_URL, (res) => {
-            console.log('📡 Auto-ping (Anti-Sleep): Status ' + res.statusCode);
-        }).on('error', (e) => console.log('⚠️ Erro no auto-ping: ' + e.message));
-    }
-}, 600000);
-
-// --- CLIENTE DISCORD ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -50,166 +57,164 @@ const commands = [
     { name: 'ajuda', description: 'Ver lista de comandos' }
 ];
 
+// --- 3. HEARTBEAT (ANTI-SLEEP) ---
+setInterval(() => {
+    const timestamp = new Date().toLocaleTimeString('pt-BR');
+    console.log('💓 [HEARTBEAT] ' + timestamp + ': Bot está online.');
+    
+    if (APP_URL) {
+        http.get(APP_URL, (res) => {
+            // Self-ping para evitar hibernação no plano free
+        }).on('error', (err) => {
+            console.log('Self-ping falhou: ' + err.message);
+        });
+    }
+}, 300000); // A cada 5 minutos
+
 client.once('ready', () => {
-    console.log('🚀 ' + client.user.tag + ' está pronto!');
-    console.log('📢 IMPORTANTE: Use "!setup" no canal do seu servidor para ativar os comandos /');
+    console.log('🚀 [DISCORD] Logado como ' + client.user.tag);
+    console.log('🚒 Sistema pronto. Use !setup em um canal para registrar os comandos /');
 });
 
-// --- COMANDO DE SETUP (RESTRITO A SERVIDOR) ---
+// --- 4. REGISTRO DE COMANDOS (!setup) ---
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
     if (message.content === '!setup') {
         if (!message.member.permissions.has('Administrator')) {
-            return message.reply('❌ Você precisa de permissão de Administrador para usar o !setup.');
+            return message.reply('❌ Apenas administradores podem usar este comando.');
         }
 
         const rest = new REST({ version: '10' }).setToken(TOKEN);
         try {
-            await message.reply('⏳ Registrando comandos apenas neste servidor...');
+            await message.reply('⏳ Registrando comandos slash neste servidor...');
             
-            // Registra os comandos APENAS nesta Guild (Servidor)
             await rest.put(
                 Routes.applicationGuildCommands(client.user.id, message.guild.id),
                 { body: commands },
             );
             
-            await message.reply('✅ **Comandos Slash Ativados!** Digite `/ponto` para testar.\n*Nota: Se não aparecer, reinicie seu Discord.*');
+            await message.reply('✅ **Comandos Slash Ativados!**\nDigite `/ponto` para começar.');
         } catch (error) {
             console.error(error);
-            await message.reply('❌ Erro no Registro: ' + error.message);
+            await message.reply('❌ Falha ao registrar comandos: ' + error.message);
         }
     }
 });
 
-// --- INTERAÇÕES DE COMANDO ---
+// --- 5. INTERAÇÕES (SLASH E BOTÕES) ---
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    // Lógica de Comandos Slash
+    if (interaction.isChatInputCommand()) {
+        const { commandName } = interaction;
+        const hora = new Date().toLocaleTimeString('pt-BR');
 
-    const { commandName } = interaction;
-    const now = new Date().toLocaleTimeString('pt-BR');
+        if (commandName === 'ponto') {
+            const embed = new EmbedBuilder()
+                .setTitle('🚒 Bombeiros de Nickyville - Ponto')
+                .setDescription('Clique no botão abaixo para iniciar seu turno.')
+                .setColor('#DA373C')
+                .addFields(
+                    { name: '👤 Agente', value: '<@' + interaction.user.id + '>', inline: true },
+                    { name: '⏰ Horário', value: hora, inline: true }
+                )
+                .setFooter({ text: 'Sistema de Ponto • turzim' });
 
-    if (commandName === 'ponto') {
-        const embed = new EmbedBuilder()
-            .setTitle('🚒 Bombeiros de Nickyville - Ponto')
-            .setDescription('Sistema de ponto eletrônico.\nInicie seu turno clicando no botão abaixo.')
-            .setColor('#DA373C')
-            .addFields(
-                { name: '👤 Agente', value: '<@' + interaction.user.id + '>', inline: true },
-                { name: '⏰ Hora Atual', value: now, inline: true }
-            )
-            .setFooter({ text: 'Sistema de Ponto • Criado por turzim' });
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Turno').setStyle(ButtonStyle.Success).setEmoji('🟢')
+            );
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Ponto').setStyle(ButtonStyle.Success).setEmoji('🟢')
-        );
+            await interaction.reply({ embeds: [embed], components: [row] });
+        }
 
-        await interaction.reply({ embeds: [embed], components: [row] });
-    }
-
-    if (commandName === 'ranking') {
-        let rankText = "";
-        if (activeSessions.size === 0) rankText = "Nenhum registro encontrado.";
-        else {
-            activeSessions.forEach((session, userId) => {
-                const totalMin = Math.floor(session.totalTime / 60000) || 0;
-                rankText += '<@' + userId + '>: **' + totalMin + ' minutos**\n';
+        if (commandName === 'ranking') {
+            let msg = activeSessions.size === 0 ? "Nenhum dado." : "";
+            activeSessions.forEach((s, id) => {
+                msg += '<@' + id + '>: ' + Math.floor(s.totalTime / 60000) + ' min\n';
             });
+
+            const embed = new EmbedBuilder()
+                .setTitle('🏆 Ranking de Horas')
+                .setDescription(msg || "Nenhum registro hoje.")
+                .setColor('#FFD700');
+            
+            await interaction.reply({ embeds: [embed] });
         }
-
-        const embed = new EmbedBuilder()
-            .setTitle('🏆 Ranking de Horas Trabalhadas')
-            .setDescription(rankText)
-            .setColor('#FFD700');
-        
-        await interaction.reply({ embeds: [embed] });
     }
-});
 
-// --- INTERAÇÕES DE BOTÃO (SISTEMA DE PONTO) ---
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isButton()) return;
+    // Lógica de Botões
+    if (interaction.isButton()) {
+        const userId = interaction.user.id;
+        const agora = Date.now();
+        const horaTexto = new Date().toLocaleTimeString('pt-BR');
+        
+        let session = activeSessions.get(userId) || { 
+            status: 'IDLE', 
+            startTime: null, 
+            history: [],
+            totalTime: 0 
+        };
 
-    const userId = interaction.user.id;
-    const nowTime = new Date().toLocaleTimeString('pt-BR');
-    
-    let session = activeSessions.get(userId) || { 
-        status: 'IDLE', 
-        startTime: null, 
-        history: [],
-        totalTime: 0 
-    };
+        let updated = false;
 
-    let updated = false;
-
-    switch (interaction.customId) {
-        case 'btn_start':
-            if (session.status !== 'IDLE') return interaction.reply({ content: 'Você já está em um turno!', ephemeral: true });
+        if (interaction.customId === 'btn_start' && session.status === 'IDLE') {
             session.status = 'WORKING';
-            session.startTime = Date.now();
-            session.history = ['🟢 **Início:** ' + nowTime];
+            session.startTime = agora;
+            session.history = ['🟢 Entrada: ' + horaTexto];
             updated = true;
-            break;
-            
-        case 'btn_pause':
-            if (session.status !== 'WORKING') return interaction.reply({ content: 'Você não pode pausar agora.', ephemeral: true });
+        } else if (interaction.customId === 'btn_pause' && session.status === 'WORKING') {
             session.status = 'PAUSED';
-            session.history.push('🟡 **Pausa:** ' + nowTime);
+            session.history.push('🟡 Pausa: ' + horaTexto);
             updated = true;
-            break;
-
-        case 'btn_resume':
-            if (session.status !== 'PAUSED') return interaction.reply({ content: 'Você não está em pausa.', ephemeral: true });
+        } else if (interaction.customId === 'btn_resume' && session.status === 'PAUSED') {
             session.status = 'WORKING';
-            session.history.push('▶️ **Retorno:** ' + nowTime);
+            session.history.push('▶️ Retorno: ' + horaTexto);
             updated = true;
-            break;
-
-        case 'btn_finish':
-            if (session.status === 'IDLE') return interaction.reply({ content: 'Inicie um turno primeiro.', ephemeral: true });
-            
-            const sessionDuration = session.startTime ? (Date.now() - session.startTime) : 0;
-            session.totalTime += sessionDuration;
-            session.history.push('🔴 **Fim:** ' + nowTime + ' (Turno de ' + Math.floor(sessionDuration / 60000) + ' min)');
+        } else if (interaction.customId === 'btn_finish') {
+            const duracao = session.startTime ? (agora - session.startTime) : 0;
+            session.totalTime += duracao;
+            session.history.push('🔴 Saída: ' + horaTexto);
             session.status = 'IDLE';
             session.startTime = null;
             updated = true;
-            break;
-    }
-
-    if (updated) {
-        activeSessions.set(userId, session);
-
-        const statusMap = { 'WORKING': '🟢 EM SERVIÇO', 'PAUSED': '🟡 EM PAUSA', 'IDLE': '🔴 FORA DE SERVIÇO' };
-        const colorMap = { 'WORKING': '#248046', 'PAUSED': '#FEE75C', 'IDLE': '#DA373C' };
-
-        const embed = new EmbedBuilder()
-            .setTitle('🚒 Controle de Ponto - Nickyville')
-            .setColor(colorMap[session.status])
-            .addFields(
-                { name: '👤 Agente', value: '<@' + userId + '>', inline: true },
-                { name: '📊 Estado', value: '**' + statusMap[session.status] + '**', inline: true },
-                { name: '📅 Histórico do Turno', value: session.history.join('\n') }
-            )
-            .setTimestamp();
-
-        const row = new ActionRowBuilder();
-        if (session.status === 'IDLE') {
-            row.addComponents(new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Novo Turno').setStyle(ButtonStyle.Success));
-        } else if (session.status === 'WORKING') {
-            row.addComponents(
-                new ButtonBuilder().setCustomId('btn_pause').setLabel('Pausar').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
-            );
-        } else if (session.status === 'PAUSED') {
-            row.addComponents(
-                new ButtonBuilder().setCustomId('btn_resume').setLabel('Retornar').setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
-            );
         }
 
-        await interaction.update({ embeds: [embed], components: [row] });
+        if (updated) {
+            activeSessions.set(userId, session);
+
+            const embed = new EmbedBuilder()
+                .setTitle('🚒 Controle de Ponto')
+                .setColor(session.status === 'WORKING' ? '#248046' : (session.status === 'PAUSED' ? '#FEE75C' : '#DA373C'))
+                .addFields(
+                    { name: '👤 Agente', value: '<@' + userId + '>', inline: true },
+                    { name: '📊 Status', value: session.status, inline: true },
+                    { name: '📋 Histórico', value: session.history.join('\n') }
+                );
+
+            const row = new ActionRowBuilder();
+            if (session.status === 'IDLE') {
+                row.addComponents(new ButtonBuilder().setCustomId('btn_start').setLabel('Novo Turno').setStyle(ButtonStyle.Success));
+            } else if (session.status === 'WORKING') {
+                row.addComponents(
+                    new ButtonBuilder().setCustomId('btn_pause').setLabel('Pausar').setStyle(ButtonStyle.Secondary),
+                    new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
+                );
+            } else if (session.status === 'PAUSED') {
+                row.addComponents(
+                    new ButtonBuilder().setCustomId('btn_resume').setLabel('Retornar').setStyle(ButtonStyle.Success),
+                    new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
+                );
+            }
+
+            await interaction.update({ embeds: [embed], components: [row] });
+        }
     }
 });
 
-client.login(TOKEN);
+if (TOKEN) {
+    client.login(TOKEN).catch(err => {
+        console.error("❌ Erro ao conectar ao Discord: " + err.message);
+    });
+} else {
+    console.log("⚠️ Aguardando configuração do DISCORD_TOKEN para iniciar...");
+}
