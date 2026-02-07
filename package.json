@@ -1,7 +1,7 @@
 {
   "name": "bombeiros-bot",
-  "version": "1.6.0",
-  "description": "Bot de Ponto - Nickyville - Slash Anular por ID",
+  "version": "1.7.0",
+  "description": "Bot de Ponto - Nickyville - High Fidelity Embeds & /Anular Command",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": { "discord.js": "^14.14.1", "dotenv": "^16.4.5" }
