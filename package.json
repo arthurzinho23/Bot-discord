@@ -1,13 +1,13 @@
 {
   "name": "bombeiros-bot",
-  "version": "1.2.0",
-  "description": "Bot de bate-ponto Nickyville - Anti-Sleep e Guild Lock",
+  "version": "1.4.0",
+  "description": "Bot de Ponto com fix de Status 1 para Render",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.0",
+    "discord.js": "^14.14.1",
     "dotenv": "^16.4.5"
   }
 }
