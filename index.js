@@ -17,7 +17,7 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('🚒 Bombeiros Bot: Sistema Ativo');
+    res.end('💼 Sistema de Ponto Multi-Serviços: Ativo');
 }).listen(PORT, '0.0.0.0');
 
 // --- 2. CONFIGURAÇÕES ---
@@ -31,11 +31,10 @@ const client = new Client({
     partials: [Partials.Channel]
 });
 
-// Banco de dados em memória (Key: UserId, Value: Session Data)
 const activeSessions = new Map();
 
 const commands = [
-    { name: 'ponto', description: 'Abrir painel de controle de ponto' },
+    { name: 'ponto', description: 'Abrir painel de bate-ponto' },
     { name: 'ranking', description: 'Exibir ranking de horas trabalhadas' },
     { name: 'ajuda', description: 'Ver guia de utilização do bot' },
     { 
@@ -52,7 +51,6 @@ const commands = [
     }
 ];
 
-// Função para registrar comandos slash
 async function registerCommands(guildId) {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
@@ -67,28 +65,18 @@ async function registerCommands(guildId) {
 }
 
 client.once('ready', () => {
-    console.log('🚀 [FIRE-BOT] Online como ' + client.user.tag);
-    console.log('🚒 Use !debug ou !setup no Discord para ativar os comandos slash.');
+    console.log('🚀 [BOT-PONTO] Online como ' + client.user.tag);
 });
 
-// Anti-crash global
-process.on('unhandledRejection', error => console.error('⚠️ [ERRO CRÍTICO]:', error));
+process.on('unhandledRejection', error => console.error('⚠️ [ERRO]:', error));
 
-// --- 3. COMANDOS DE PREFIXO (!setup / !debug) ---
+// --- 3. COMANDOS DE PREFIXO ---
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
-
     if (message.content === '!setup' || message.content === '!debug') {
-        if (!message.member.permissions.has('Administrator')) {
-            return message.reply('❌ Você não tem permissão para usar este comando.');
-        }
-
+        if (!message.member.permissions.has('Administrator')) return message.reply('❌ Permissão insuficiente.');
         const success = await registerCommands(message.guild.id);
-        if (success) {
-            await message.reply('🔄 **Sistema Reiniciado!**\nTodos os comandos `/` foram atualizados e sincronizados.');
-        } else {
-            await message.reply('❌ Houve um erro ao sincronizar. Verifique o console.');
-        }
+        if (success) await message.reply('🔄 **Sistema Sincronizado!**');
     }
 });
 
@@ -102,26 +90,25 @@ client.on('interactionCreate', async interaction => {
         const pontoId = '#' + Math.random().toString(36).substring(2, 6).toUpperCase();
         
         const embed = new EmbedBuilder()
-            .setAuthor({ name: 'CORPO DE BOMBEIROS - NICKYVILLE', iconURL: 'https://cdn-icons-png.flaticon.com/512/921/921079.png' })
-            .setTitle('🚒 Registro de Atividade Operacional')
-            .setDescription('**Atenção Agente!**\nClique no botão abaixo para iniciar seu turno oficial. Seu tempo será contabilizado automaticamente.')
+            .setTitle('📑 SISTEMA DE GESTÃO DE PONTO')
+            .setDescription('Olá ' + user.toString() + ', bem-vindo ao painel de registro. Certifique-se de estar em seu posto antes de iniciar o turno.\n\n**Lembrete:** O abuso deste sistema pode resultar em advertências administrativas.')
             .addFields(
-                { name: '👤 Operador', value: user.toString(), inline: true },
-                { name: '🆔 ID Único', value: '`' + pontoId + '` (Clique para copiar)', inline: true },
-                { name: '⚠️ Instrução', value: 'Não feche esta mensagem até terminar o serviço.', inline: false }
+                { name: '👤 Agente Solicitante', value: user.tag, inline: true },
+                { name: '🆔 Protocolo de Sessão', value: '`' + pontoId + '`', inline: true },
+                { name: '🏢 Unidade de Trabalho', value: interaction.guild.name, inline: true },
+                { name: '📅 Data de Emissão', value: new Date().toLocaleDateString('pt-BR'), inline: false },
+                { name: '🛠️ Guia de Operação', value: '1. Clique em **Iniciar** para abrir o chamado.\n2. Use **Pausar** para intervalos rápidos.\n3. Clique em **Finalizar** ao encerrar suas atividades.', inline: false }
             )
-            .setThumbnail(user.displayAvatarURL())
-            .setImage('https://i.imgur.com/vHqY7pG.png')
-            .setColor('#DA373C')
-            .setFooter({ text: 'Feito pelo turzim • Bombeiros de Nickyville' })
+            .setColor('#5865F2')
+            .setFooter({ text: 'Feito pelo turzim • Sistema Multi-Serviços v2.1' })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_start_' + pontoId)
-                .setLabel('INICIAR SERVIÇO')
-                .setStyle(ButtonStyle.Success)
-                .setEmoji('🚒')
+                .setLabel('INICIAR JORNADA')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('⏱️')
         );
 
         await interaction.reply({ embeds: [embed], components: [row] });
@@ -129,7 +116,7 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'anular') {
         if (!interaction.member.permissions.has('Administrator')) {
-            return interaction.reply({ content: '❌ Acesso negado. Apenas administradores podem anular pontos.', ephemeral: true });
+            return interaction.reply({ content: '❌ Apenas administradores podem anular pontos.', ephemeral: true });
         }
 
         const idAlvo = options.getString('id').toUpperCase().trim();
@@ -148,37 +135,39 @@ client.on('interactionCreate', async interaction => {
             activeSessions.delete(foundKey);
 
             const embed = new EmbedBuilder()
-                .setTitle('🛑 Registro Anulado')
-                .setColor('#000000')
-                .setDescription('O ponto de ID **' + fullId + '** foi invalidado pelo comando administrativo.')
+                .setTitle('🛑 REGISTRO INVALIDADO')
+                .setColor('#2B2D31')
+                .setDescription('O sistema de auditoria confirmou a exclusão do registro abaixo por ordem administrativa.')
                 .addFields(
+                    { name: '📌 Identificador', value: '`' + fullId + '`', inline: true },
                     { name: '👤 Ex-Titular', value: '<@' + data.userId + '>', inline: true },
-                    { name: '🛡️ Autoridade', value: user.toString(), inline: true }
+                    { name: '🛡️ Autoridade Responsável', value: user.toString(), inline: false },
+                    { name: '📅 Data do Cancelamento', value: new Date().toLocaleString('pt-BR'), inline: false }
                 )
-                .setFooter({ text: 'Feito pelo turzim • Controle Administrativo' })
+                .setFooter({ text: 'Feito pelo turzim • Auditoria Nickyville' })
                 .setTimestamp();
 
             await interaction.reply({ embeds: [embed] });
         } else {
-            await interaction.reply({ content: '❌ ID **' + fullId + '** não encontrado no sistema atual.', ephemeral: true });
+            await interaction.reply({ content: '❌ Protocolo **' + fullId + '** não encontrado no cache ativo.', ephemeral: true });
         }
     }
 
     if (commandName === 'ranking') {
         const sorted = Array.from(activeSessions.values()).sort((a, b) => b.totalTime - a.totalTime);
+        let rankMsg = sorted.length > 0 ? "" : "*Não há agentes operando no momento.*";
         
-        let rankMsg = sorted.length > 0 ? "" : "*Nenhum registro de atividade nas últimas 24h.*";
         sorted.forEach((s, i) => {
-            const pos = i === 0 ? '🥇' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '🚒'));
-            rankMsg += pos + ' <@' + s.userId + '> | ID: `' + s.pontoId + '`: **' + Math.floor(s.totalTime / 60000) + ' min**\n';
+            const pos = i === 0 ? '👑' : (i === 1 ? '🥈' : (i === 2 ? '🥉' : '🔹'));
+            rankMsg += pos + ' **' + (i+1) + 'º** - <@' + s.userId + '> | `' + s.pontoId + '`\n┗━ 🕒 Acumulado: **' + Math.floor(s.totalTime / 60000) + ' min**\n';
         });
 
         const embed = new EmbedBuilder()
-            .setTitle('🏆 Quadro de Honra - Nickyville')
-            .setDescription(rankMsg)
-            .setColor('#FFD700')
-            .setThumbnail('https://cdn-icons-png.flaticon.com/512/3112/3112946.png')
-            .setFooter({ text: 'Feito pelo turzim • Ranking Oficial' })
+            .setTitle('🏆 QUADRO GERAL DE ATIVIDADES')
+            .setDescription('Lista de agentes ativos e seus respectivos tempos de serviço nas últimas 24 horas.\n\n' + rankMsg)
+            .setColor('#FEE75C')
+            .addFields({ name: '📊 Estatística', value: 'Atualmente temos **' + sorted.length + '** funcionários em serviço.', inline: false })
+            .setFooter({ text: 'Feito pelo turzim • Atualizado em tempo real' })
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
@@ -186,15 +175,33 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'ajuda') {
         const embed = new EmbedBuilder()
-            .setTitle('❓ Central de Ajuda')
+            .setTitle('❓ CENTRAL DE AJUDA E SUPORTE OPERACIONAL')
+            .setDescription('Seja bem-vindo à central de auxílio do **Nickyville Multi-Serviços**. Este sistema gerencia de forma automatizada todos os registros de jornada de trabalho dos funcionários.')
             .setColor('#5865F2')
             .addFields(
-                { name: '`/ponto`', value: 'Inicia um novo registro de trabalho.' },
-                { name: '`/ranking`', value: 'Exibe a lista de atividade.' },
-                { name: '`/anular`', value: 'Administradores removem registros por ID.' },
-                { name: '`!debug`', value: 'Sincroniza os comandos se eles não aparecerem.' }
+                { 
+                    name: '🚀 COMANDOS PARA COLABORADORES', 
+                    value: '>>> `/ponto` - Abre o painel interativo para iniciar sua jornada.\n`/ranking` - Exibe a lista de funcionários ativos e o tempo acumulado.', 
+                    inline: false 
+                },
+                { 
+                    name: '🛡️ FERRAMENTAS ADMINISTRATIVAS', 
+                    value: '>>> `/anular [ID]` - Invalida um registro específico (Protocolo).\n`!setup` - Sincroniza e atualiza os comandos do bot.\n`!debug` - Realiza uma limpeza no cache do sistema.', 
+                    inline: false 
+                },
+                { 
+                    name: '📜 PROTOCOLO DE UTILIZAÇÃO', 
+                    value: '• Sempre registre sua entrada ao chegar no posto.\n• O tempo de pausa **não** é contabilizado como jornada ativa.\n• Certifique-se de finalizar o ponto antes de se desconectar.', 
+                    inline: false 
+                },
+                { 
+                    name: 'ℹ️ INFORMAÇÕES TÉCNICAS', 
+                    value: '```yml\nVersão: 2.1.0-Stable\nDesenvolvedor: turzim\nServidor: Multi-Ponto\nStatus: Operacional```', 
+                    inline: false 
+                }
             )
-            .setFooter({ text: 'Feito pelo turzim • Suporte Nickyville' });
+            .setFooter({ text: 'Feito pelo turzim • Suporte Especializado' })
+            .setTimestamp();
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 });
@@ -220,7 +227,7 @@ client.on('interactionCreate', async interaction => {
     };
 
     if (session.userId !== userId && !interaction.member.permissions.has('Administrator')) {
-        return interaction.reply({ content: '❌ Este painel é restrito ao agente que o solicitou.', ephemeral: true });
+        return interaction.reply({ content: '❌ Acesso negado. Este painel pertence a outro usuário.', ephemeral: true });
     }
 
     let changed = false;
@@ -228,24 +235,22 @@ client.on('interactionCreate', async interaction => {
     if (action === 'btn_start' && session.status === 'IDLE') {
         session.status = 'WORKING';
         session.startTime = now;
-        session.history = ['🟢 Entrada: ' + hora];
+        session.history = ['🟢 Entrada Registrada: ' + hora];
         changed = true;
     } else if (action === 'btn_pause' && session.status === 'WORKING') {
         session.status = 'PAUSED';
-        session.history.push('🟡 Pausa: ' + hora);
+        session.history.push('🟡 Intervalo Iniciado: ' + hora);
         session.totalTime += (now - session.startTime);
         session.startTime = null;
         changed = true;
     } else if (action === 'btn_resume' && session.status === 'PAUSED') {
         session.status = 'WORKING';
         session.startTime = now;
-        session.history.push('▶️ Retorno: ' + hora);
+        session.history.push('▶️ Retorno ao Posto: ' + hora);
         changed = true;
     } else if (action === 'btn_finish') {
-        if (session.status === 'WORKING') {
-            session.totalTime += (now - session.startTime);
-        }
-        session.history.push('🔴 Saída: ' + hora);
+        if (session.status === 'WORKING') session.totalTime += (now - session.startTime);
+        session.history.push('🔴 Jornada Encerrada: ' + hora);
         session.status = 'IDLE';
         session.startTime = null;
         changed = true;
@@ -255,17 +260,18 @@ client.on('interactionCreate', async interaction => {
         activeSessions.set(userId, session);
 
         const embed = new EmbedBuilder()
-            .setAuthor({ name: 'ESTAÇÃO OPERACIONAL', iconURL: interaction.user.displayAvatarURL() })
-            .setTitle(session.status === 'IDLE' ? '✅ SERVIÇO FINALIZADO' : '🚒 SERVIÇO EM CURSO')
-            .setDescription('**ID da Sessão:** `' + session.pontoId + '`')
+            .setTitle(session.status === 'IDLE' ? '🏁 JORNADA FINALIZADA' : '⏳ TURNO EM PROCESSAMENTO')
+            .setDescription('**Protocolo:** `' + session.pontoId + '`\nStatus atualizado do registro de atividades do colaborador.')
             .setColor(session.status === 'WORKING' ? '#248046' : (session.status === 'PAUSED' ? '#FEE75C' : '#DA373C'))
             .addFields(
-                { name: '👤 Agente', value: interaction.user.toString(), inline: true },
-                { name: '📊 Status', value: '`' + session.status + '`', inline: true },
-                { name: '⏰ Tempo Total', value: Math.floor(session.totalTime / 60000) + ' minutos', inline: true },
-                { name: '📋 Registro de Atividades', value: '```ml\n' + session.history.join('\n') + '```' }
+                { name: '👤 Colaborador', value: interaction.user.tag, inline: true },
+                { name: '📊 Estado Atual', value: '`' + session.status + '`', inline: true },
+                { name: '⏰ Tempo Acumulado', value: '**' + Math.floor(session.totalTime / 60000) + '** minutos', inline: true },
+                { name: '📅 Data', value: new Date().toLocaleDateString('pt-BR'), inline: true },
+                { name: '🏢 Unidade', value: interaction.guild.name, inline: true },
+                { name: '📋 Registro de Logs', value: '```ml\n' + session.history.join('\n') + '\nTotal: ' + Math.floor(session.totalTime / 60000) + ' min```' }
             )
-            .setFooter({ text: 'Feito pelo turzim • Use /anular ' + session.pontoId + ' para correções.' })
+            .setFooter({ text: 'Feito pelo turzim • Registro Oficial de Ponto' })
             .setTimestamp();
 
         const row = new ActionRowBuilder();
@@ -273,12 +279,12 @@ client.on('interactionCreate', async interaction => {
             await interaction.update({ embeds: [embed], components: [] });
         } else {
             if (session.status === 'WORKING') {
-                row.addComponents(new ButtonBuilder().setCustomId('btn_pause_' + pId).setLabel('PAUSAR').setStyle(ButtonStyle.Secondary).setEmoji('🟡'));
+                row.addComponents(new ButtonBuilder().setCustomId('btn_pause_' + pId).setLabel('PAUSAR INTERVALO').setStyle(ButtonStyle.Secondary).setEmoji('🟡'));
             } else {
-                row.addComponents(new ButtonBuilder().setCustomId('btn_resume_' + pId).setLabel('RETORNAR').setStyle(ButtonStyle.Success).setEmoji('▶️'));
+                row.addComponents(new ButtonBuilder().setCustomId('btn_resume_' + pId).setLabel('RETORNAR TRABALHO').setStyle(ButtonStyle.Success).setEmoji('▶️'));
             }
             row.addComponents(
-                new ButtonBuilder().setCustomId('btn_finish_' + pId).setLabel('FINALIZAR').setStyle(ButtonStyle.Danger).setEmoji('🔴')
+                new ButtonBuilder().setCustomId('btn_finish_' + pId).setLabel('FECHAR PONTO').setStyle(ButtonStyle.Danger).setEmoji('🔴')
             );
             await interaction.update({ embeds: [embed], components: [row] });
         }
