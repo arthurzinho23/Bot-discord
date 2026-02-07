@@ -99,7 +99,6 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, user } = interaction;
 
     if (commandName === 'ponto') {
-        // Verifica se o usuário já tem uma sessão ativa para evitar duplicatas estranhas
         const pontoId = '#' + Math.random().toString(36).substring(2, 6).toUpperCase();
         
         const embed = new EmbedBuilder()
@@ -112,9 +111,9 @@ client.on('interactionCreate', async interaction => {
                 { name: '⚠️ Instrução', value: 'Não feche esta mensagem até terminar o serviço.', inline: false }
             )
             .setThumbnail(user.displayAvatarURL())
-            .setImage('https://i.imgur.com/vHqY7pG.png') // Banner decorativo se houver
+            .setImage('https://i.imgur.com/vHqY7pG.png')
             .setColor('#DA373C')
-            .setFooter({ text: 'Sistema Nickyville • turzim' })
+            .setFooter({ text: 'Feito pelo turzim • Bombeiros de Nickyville' })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -156,6 +155,7 @@ client.on('interactionCreate', async interaction => {
                     { name: '👤 Ex-Titular', value: '<@' + data.userId + '>', inline: true },
                     { name: '🛡️ Autoridade', value: user.toString(), inline: true }
                 )
+                .setFooter({ text: 'Feito pelo turzim • Controle Administrativo' })
                 .setTimestamp();
 
             await interaction.reply({ embeds: [embed] });
@@ -178,7 +178,7 @@ client.on('interactionCreate', async interaction => {
             .setDescription(rankMsg)
             .setColor('#FFD700')
             .setThumbnail('https://cdn-icons-png.flaticon.com/512/3112/3112946.png')
-            .setFooter({ text: 'Ranking em tempo real' })
+            .setFooter({ text: 'Feito pelo turzim • Ranking Oficial' })
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] });
@@ -189,12 +189,12 @@ client.on('interactionCreate', async interaction => {
             .setTitle('❓ Central de Ajuda')
             .setColor('#5865F2')
             .addFields(
-                // Fix: Escaped backticks inside the template literal to prevent syntax errors
                 { name: '`/ponto`', value: 'Inicia um novo registro de trabalho.' },
                 { name: '`/ranking`', value: 'Exibe a lista de atividade.' },
                 { name: '`/anular`', value: 'Administradores removem registros por ID.' },
                 { name: '`!debug`', value: 'Sincroniza os comandos se eles não aparecerem.' }
-            );
+            )
+            .setFooter({ text: 'Feito pelo turzim • Suporte Nickyville' });
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 });
@@ -219,7 +219,6 @@ client.on('interactionCreate', async interaction => {
         pontoId: pId
     };
 
-    // Trava de segurança: apenas quem gerou o ponto pode clicar
     if (session.userId !== userId && !interaction.member.permissions.has('Administrator')) {
         return interaction.reply({ content: '❌ Este painel é restrito ao agente que o solicitou.', ephemeral: true });
     }
@@ -234,7 +233,6 @@ client.on('interactionCreate', async interaction => {
     } else if (action === 'btn_pause' && session.status === 'WORKING') {
         session.status = 'PAUSED';
         session.history.push('🟡 Pausa: ' + hora);
-        // Soma o tempo acumulado até a pausa
         session.totalTime += (now - session.startTime);
         session.startTime = null;
         changed = true;
@@ -267,7 +265,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '⏰ Tempo Total', value: Math.floor(session.totalTime / 60000) + ' minutos', inline: true },
                 { name: '📋 Registro de Atividades', value: '```ml\n' + session.history.join('\n') + '```' }
             )
-            .setFooter({ text: 'Use /anular ' + session.pontoId + ' para correções.' })
+            .setFooter({ text: 'Feito pelo turzim • Use /anular ' + session.pontoId + ' para correções.' })
             .setTimestamp();
 
         const row = new ActionRowBuilder();
