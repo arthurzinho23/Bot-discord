@@ -1,13 +1,25 @@
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const http = require('http');
 require('dotenv').config();
 
+// --- CONFIGURAÇÃO PARA RENDER.COM ---
+// O Render exige que Web Services façam bind em uma porta.
+// Este servidor HTTP simples satisfaz o health check do Render.
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot Bombeiros está online! 🚒');
+});
+
+server.listen(PORT, () => {
+    console.log(`Servidor HTTP ouvindo na porta ${PORT}`);
+});
+
+// --- CLIENTE DISCORD ---
 const client = new Client({
     intents: [GatewayIntentBits.Guilds],
     partials: [Partials.Channel]
 });
-
-// Configuração
-const CHANNEL_ID = 'ID_DO_CANAL_BATE_PONTO';
 
 // Banco de dados em memória (substitua por SQL/MongoDB em produção)
 const activeSessions = new Map();
@@ -41,6 +53,7 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.reply({ embeds: [embed], components: [row] });
     }
+    // Adicione aqui lógica para /ranking e /ajuda se desejar
 });
 
 // Manipulador de Botões
