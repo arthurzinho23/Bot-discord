@@ -6,24 +6,27 @@ require('dotenv').config();
 if (!process.env.DISCORD_TOKEN) {
     console.error("❌ ERRO CRÍTICO: Token do Discord não encontrado!");
     console.error("👉 Defina a variável de ambiente 'DISCORD_TOKEN' no seu arquivo .env ou no painel do Render.");
-    process.exit(1); // Encerra o processo para indicar erro
+    process.exit(1);
 }
 
-// --- CONFIGURAÇÃO PARA RENDER.COM ---
-// Mantém o bot vivo no Render
+// --- SERVIDOR HTTP (PARA RENDER.COM) ---
 const PORT = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot Bombeiros está online e rodando! 🚒');
+    res.end('Bot Bombeiros está online! 🚒');
 });
-
 server.listen(PORT, () => {
-    console.log(`🌐 Servidor HTTP ouvindo na porta ${PORT} (Render Health Check)`);
+    console.log(`🌐 Servidor HTTP ouvindo na porta ${PORT}`);
 });
 
-// --- CONFIGURAÇÃO DO BOT ---
+// --- CLIENTE DISCORD ---
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds], // Necessário para Slash Commands
+    intents: [
+        GatewayIntentBits.Guilds,
+        // ADICIONADO: Necessário para responder quando marcado (@Bot)
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent 
+    ],
     partials: [Partials.Channel]
 });
 
@@ -32,43 +35,61 @@ const activeSessions = new Map();
 
 // Definição dos Comandos Slash
 const commands = [
-    {
-        name: 'ponto',
-        description: 'Abrir painel de controle de ponto'
-    },
-    {
-        name: 'ranking',
-        description: 'Exibir ranking de horas trabalhadas'
-    },
-    {
-        name: 'ajuda',
-        description: 'Ver lista de comandos'
-    }
+    { name: 'ponto', description: 'Abrir painel de controle de ponto' },
+    { name: 'ranking', description: 'Exibir ranking de horas trabalhadas' },
+    { name: 'ajuda', description: 'Ver lista de comandos' }
 ];
 
 client.once('ready', async () => {
     console.log(`✅ Logado como ${client.user.tag}`);
+    console.log('📢 DICA: Certifique-se de ativar "MESSAGE CONTENT INTENT" no Portal do Desenvolvedor do Discord.');
 
-    // Registrar comandos Slash automaticamente ao iniciar
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
     try {
-        console.log('⏳ Iniciando atualização dos comandos Slash (/).');
-        console.log('ℹ️ Nota: Comandos globais podem levar até 1 hora para aparecer no Discord.');
-        console.log('💡 Dica: Se não aparecerem, tente expulsar e readicionar o bot no servidor.');
-
+        console.log('⏳ Registrando comandos Slash (isso pode levar alguns minutos)...');
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commands },
         );
-
-        console.log('✅ Comandos Slash registrados com sucesso!');
+        console.log('✅ Comandos registrados! Se não aparecerem, tente marcar o bot (@Bot).');
     } catch (error) {
-        console.error('❌ Erro ao registrar comandos:', error);
+        console.error('❌ Erro no registro de comandos:', error);
     }
 });
 
-// --- MANIPULAÇÃO DE COMANDOS ---
+// --- NOVO: RESPOSTA AO SER MARCADO (@BOT) ---
+client.on('messageCreate', async message => {
+    // Ignora mensagens de outros bots
+    if (message.author.bot) return;
+
+    // Se a mensagem menciona este bot
+    if (message.mentions.has(client.user)) {
+        console.log(`🔔 Bot mencionado por ${message.author.tag}`);
+        
+        const embed = new EmbedBuilder()
+            .setTitle('Bombeiros de Nickyville')
+            .setDescription('**Painel de Ponto**\nVocê me chamou? Aqui está seu painel de controle.')
+            .setColor('#DA373C')
+            .setFooter({ text: 'feito pelo turzim' })
+            .addFields(
+                { name: 'Usuário', value: `<@${message.author.id}>`, inline: true },
+                { name: 'Status Atual', value: '🔴 IDLE', inline: true }
+            );
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_start')
+                    .setLabel('Iniciar Ponto')
+                    .setStyle(ButtonStyle.Success)
+            );
+
+        await message.reply({ embeds: [embed], components: [row] });
+    }
+});
+
+// --- MANIPULAÇÃO DE COMANDOS SLASH ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -118,7 +139,7 @@ client.on('interactionCreate', async interaction => {
     } else if (commandName === 'ajuda') {
         const embed = new EmbedBuilder()
             .setTitle('Ajuda')
-            .setDescription('Comandos disponíveis:\n/ponto - Abrir painel\n/ranking - Ver horas')
+            .setDescription('**Comandos:**\n/ponto - Painel\n/ranking - Ver horas\nOu me marque (@Bot) para abrir o painel.')
             .setColor('#DA373C');
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
@@ -169,7 +190,7 @@ client.on('interactionCreate', async interaction => {
 
     activeSessions.set(userId, session);
 
-    // Atualizar o Embed
+    // Atualiza Embed
     const statusEmoji = session.status === 'WORKING' ? '🟢' : session.status === 'PAUSED' ? '🟡' : '🔴';
     
     const newEmbed = new EmbedBuilder()
@@ -189,7 +210,6 @@ client.on('interactionCreate', async interaction => {
         newEmbed.setDescription(`Turno finalizado. ${actionLog}`);
     }
 
-    // Botões Dinâmicos
     const newRow = new ActionRowBuilder();
     
     if (session.status === 'IDLE') {
@@ -211,9 +231,6 @@ client.on('interactionCreate', async interaction => {
     await interaction.update({ embeds: [newEmbed], components: [newRow] });
 });
 
-// Login com tratamento de erro
 client.login(process.env.DISCORD_TOKEN).catch(err => {
-    console.error("❌ Falha ao fazer login no Discord!");
-    console.error("Verifique se o token está correto e se foi adicionado nas variáveis de ambiente.");
-    console.error(err);
+    console.error("❌ Erro de Login:", err);
 });
