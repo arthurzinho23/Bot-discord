@@ -2,20 +2,28 @@ const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, But
 const http = require('http');
 require('dotenv').config();
 
+// --- VERIFICAÇÃO DE TOKEN ---
+if (!process.env.DISCORD_TOKEN) {
+    console.error("❌ ERRO CRÍTICO: Token do Discord não encontrado!");
+    console.error("👉 Defina a variável de ambiente 'DISCORD_TOKEN' no seu arquivo .env ou no painel do Render.");
+    process.exit(1); // Encerra o processo para indicar erro
+}
+
 // --- CONFIGURAÇÃO PARA RENDER.COM ---
+// Mantém o bot vivo no Render
 const PORT = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot Bombeiros está online! 🚒');
+    res.end('Bot Bombeiros está online e rodando! 🚒');
 });
 
 server.listen(PORT, () => {
-    console.log(`Servidor HTTP ouvindo na porta ${PORT}`);
+    console.log(`🌐 Servidor HTTP ouvindo na porta ${PORT} (Render Health Check)`);
 });
 
 // --- CONFIGURAÇÃO DO BOT ---
 const client = new Client({
-    intents: [GatewayIntentBits.Guilds],
+    intents: [GatewayIntentBits.Guilds], // Necessário para Slash Commands
     partials: [Partials.Channel]
 });
 
@@ -39,22 +47,24 @@ const commands = [
 ];
 
 client.once('ready', async () => {
-    console.log(`Logado como ${client.user.tag}`);
+    console.log(`✅ Logado como ${client.user.tag}`);
 
     // Registrar comandos Slash automaticamente ao iniciar
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
     try {
-        console.log('Iniciando atualização dos comandos de aplicação (/).');
+        console.log('⏳ Iniciando atualização dos comandos Slash (/).');
+        console.log('ℹ️ Nota: Comandos globais podem levar até 1 hora para aparecer no Discord.');
+        console.log('💡 Dica: Se não aparecerem, tente expulsar e readicionar o bot no servidor.');
 
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commands },
         );
 
-        console.log('Comandos de aplicação (/) recarregados com sucesso.');
+        console.log('✅ Comandos Slash registrados com sucesso!');
     } catch (error) {
-        console.error(error);
+        console.error('❌ Erro ao registrar comandos:', error);
     }
 });
 
@@ -85,7 +95,6 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.reply({ embeds: [embed], components: [row] });
     } else if (commandName === 'ranking') {
-        // Exemplo simples de ranking
         let rankMsg = "🏆 **Ranking de Horas**\n";
         if (activeSessions.size === 0) {
             rankMsg += "Nenhum registro ainda.";
@@ -120,11 +129,9 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
     const userId = interaction.user.id;
-    // Recupera sessão ou cria nova
     let session = activeSessions.get(userId) || { status: 'IDLE', startTime: null, pauses: [], totalTime: 0 };
     let actionLog = '';
 
-    // Lógica de Estado
     switch (interaction.customId) {
         case 'btn_start':
             if (session.status !== 'IDLE') return interaction.reply({ content: 'Você já está em serviço!', ephemeral: true });
@@ -143,16 +150,13 @@ client.on('interactionCreate', async interaction => {
         case 'btn_resume':
             if (session.status !== 'PAUSED') return interaction.reply({ content: 'Ação inválida.', ephemeral: true });
             session.status = 'WORKING';
-            // Calcula tempo de pausa se necessário para descontar
             break;
 
         case 'btn_finish':
             if (session.status === 'IDLE') return interaction.reply({ content: 'Você não está em serviço.', ephemeral: true });
             
-            // Calcula tempo trabalhado na sessão
             if (session.startTime) {
                 const sessionDuration = Date.now() - session.startTime;
-                // (Aqui você subtrairia as pausas em um sistema real)
                 session.totalTime = (session.totalTime || 0) + sessionDuration;
             }
             
@@ -165,7 +169,7 @@ client.on('interactionCreate', async interaction => {
 
     activeSessions.set(userId, session);
 
-    // Atualizar o Embed Existente
+    // Atualizar o Embed
     const statusEmoji = session.status === 'WORKING' ? '🟢' : session.status === 'PAUSED' ? '🟡' : '🔴';
     
     const newEmbed = new EmbedBuilder()
@@ -185,7 +189,7 @@ client.on('interactionCreate', async interaction => {
         newEmbed.setDescription(`Turno finalizado. ${actionLog}`);
     }
 
-    // Novos Botões
+    // Botões Dinâmicos
     const newRow = new ActionRowBuilder();
     
     if (session.status === 'IDLE') {
@@ -207,4 +211,9 @@ client.on('interactionCreate', async interaction => {
     await interaction.update({ embeds: [newEmbed], components: [newRow] });
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Login com tratamento de erro
+client.login(process.env.DISCORD_TOKEN).catch(err => {
+    console.error("❌ Falha ao fazer login no Discord!");
+    console.error("Verifique se o token está correto e se foi adicionado nas variáveis de ambiente.");
+    console.error(err);
+});
