@@ -2,35 +2,35 @@ const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActionRowBuilder, But
 const http = require('http');
 require('dotenv').config();
 
-// --- CONFIGURAÇÕES ---
+// --- CONFIGURAÇÃO DE AMBIENTE ---
 const PORT = process.env.PORT || 3000;
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL; // O Render fornece isso automaticamente
+const TOKEN = process.env.DISCORD_TOKEN;
+const APP_URL = process.env.RENDER_EXTERNAL_URL; 
 
-if (!DISCORD_TOKEN) {
-    console.error("❌ ERRO: DISCORD_TOKEN não definido!");
+if (!TOKEN) {
+    console.error("❌ ERRO: A variável DISCORD_TOKEN não foi configurada!");
     process.exit(1);
 }
 
-// --- SERVIDOR HTTP & SISTEMA DE HEARTBEAT (ANTI-SLEEP) ---
+// --- SERVIDOR PARA MANTER ONLINE (HEARTBEAT) ---
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot Bombeiros Ativo 🚒');
+    res.writeHead(200);
+    res.end('Bot de Ponto Online 🚒');
 });
 
 server.listen(PORT, () => {
-    console.log(`🌐 Servidor rodando na porta ${PORT}`);
+    console.log('✅ Servidor HTTP pronto na porta ' + PORT);
 });
 
-// "Tic" a cada 10 minutos para o bot não morrer
+// "Tic" a cada 10 minutos para evitar hibernação
 setInterval(() => {
-    console.log('💓 Tic-Tac: Mantendo conexão ativa...');
-    if (RENDER_URL) {
-        http.get(RENDER_URL, (res) => {
-            console.log(`📡 Auto-ping realizado: ${res.statusCode}`);
-        }).on('error', (err) => console.log('Erro no auto-ping:', err.message));
+    console.log('💓 Heartbeat: Bot está vivo e operante.');
+    if (APP_URL) {
+        http.get(APP_URL, (res) => {
+            console.log('📡 Auto-ping (Anti-Sleep): Status ' + res.statusCode);
+        }).on('error', (e) => console.log('⚠️ Erro no auto-ping: ' + e.message));
     }
-}, 600000); // 10 minutos
+}, 600000);
 
 // --- CLIENTE DISCORD ---
 const client = new Client({
@@ -51,54 +51,54 @@ const commands = [
 ];
 
 client.once('ready', () => {
-    console.log(`✅ ${client.user.tag} está online!`);
-    console.log('🚨 ATENÇÃO: Para os comandos / aparecerem, use "!setup" no servidor desejado.');
+    console.log('🚀 ' + client.user.tag + ' está pronto!');
+    console.log('📢 IMPORTANTE: Use "!setup" no canal do seu servidor para ativar os comandos /');
 });
 
-// --- SISTEMA DE REGISTRO LOCAL (GUILD ONLY) ---
+// --- COMANDO DE SETUP (RESTRITO A SERVIDOR) ---
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
     if (message.content === '!setup') {
         if (!message.member.permissions.has('Administrator')) {
-            return message.reply('❌ Apenas administradores podem usar o !setup.');
+            return message.reply('❌ Você precisa de permissão de Administrador para usar o !setup.');
         }
 
-        const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
+        const rest = new REST({ version: '10' }).setToken(TOKEN);
         try {
-            await message.reply('⏳ Registrando comandos Slash neste servidor especificamente...');
+            await message.reply('⏳ Registrando comandos apenas neste servidor...');
             
-            // Registra os comandos APENAS neste servidor (ID do servidor atual)
+            // Registra os comandos APENAS nesta Guild (Servidor)
             await rest.put(
                 Routes.applicationGuildCommands(client.user.id, message.guild.id),
                 { body: commands },
             );
             
-            await message.reply('✅ **Comandos registrados!** Agora o `/ponto` só aparecerá neste servidor.');
+            await message.reply('✅ **Comandos Slash Ativados!** Digite `/ponto` para testar.\n*Nota: Se não aparecer, reinicie seu Discord.*');
         } catch (error) {
             console.error(error);
-            await message.reply('❌ Falha ao registrar comandos: ' + error.message);
+            await message.reply('❌ Erro no Registro: ' + error.message);
         }
     }
 });
 
-// --- LOGICA DE COMANDOS SLASH ---
+// --- INTERAÇÕES DE COMANDO ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName } = interaction;
-    const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const now = new Date().toLocaleTimeString('pt-BR');
 
     if (commandName === 'ponto') {
         const embed = new EmbedBuilder()
             .setTitle('🚒 Bombeiros de Nickyville - Ponto')
-            .setDescription('Clique no botão abaixo para iniciar seu turno de serviço.')
+            .setDescription('Sistema de ponto eletrônico.\nInicie seu turno clicando no botão abaixo.')
             .setColor('#DA373C')
             .addFields(
-                { name: '👤 Usuário', value: `<@${interaction.user.id}>`, inline: true },
-                { name: '🕒 Horário Atual', value: `${now}`, inline: true }
+                { name: '👤 Agente', value: '<@' + interaction.user.id + '>', inline: true },
+                { name: '⏰ Hora Atual', value: now, inline: true }
             )
-            .setFooter({ text: 'Sistema de Ponto • Nickyville' });
+            .setFooter({ text: 'Sistema de Ponto • Criado por turzim' });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Ponto').setStyle(ButtonStyle.Success).setEmoji('🟢')
@@ -106,9 +106,27 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.reply({ embeds: [embed], components: [row] });
     }
+
+    if (commandName === 'ranking') {
+        let rankText = "";
+        if (activeSessions.size === 0) rankText = "Nenhum registro encontrado.";
+        else {
+            activeSessions.forEach((session, userId) => {
+                const totalMin = Math.floor(session.totalTime / 60000) || 0;
+                rankText += '<@' + userId + '>: **' + totalMin + ' minutos**\n';
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('🏆 Ranking de Horas Trabalhadas')
+            .setDescription(rankText)
+            .setColor('#FFD700');
+        
+        await interaction.reply({ embeds: [embed] });
+    }
 });
 
-// --- LOGICA DE BOTÕES COM HORÁRIOS ---
+// --- INTERAÇÕES DE BOTÃO (SISTEMA DE PONTO) ---
 client.on('interactionCreate', async interaction => {
     if (!interaction.isButton()) return;
 
@@ -118,69 +136,80 @@ client.on('interactionCreate', async interaction => {
     let session = activeSessions.get(userId) || { 
         status: 'IDLE', 
         startTime: null, 
-        lastAction: 'Nenhuma',
         history: [],
         totalTime: 0 
     };
 
+    let updated = false;
+
     switch (interaction.customId) {
         case 'btn_start':
+            if (session.status !== 'IDLE') return interaction.reply({ content: 'Você já está em um turno!', ephemeral: true });
             session.status = 'WORKING';
             session.startTime = Date.now();
-            session.history.push(`➡️ Início: ${nowTime}`);
+            session.history = ['🟢 **Início:** ' + nowTime];
+            updated = true;
             break;
             
         case 'btn_pause':
+            if (session.status !== 'WORKING') return interaction.reply({ content: 'Você não pode pausar agora.', ephemeral: true });
             session.status = 'PAUSED';
-            session.history.push(`⏸️ Pausa: ${nowTime}`);
+            session.history.push('🟡 **Pausa:** ' + nowTime);
+            updated = true;
             break;
 
         case 'btn_resume':
+            if (session.status !== 'PAUSED') return interaction.reply({ content: 'Você não está em pausa.', ephemeral: true });
             session.status = 'WORKING';
-            session.history.push(`▶️ Retorno: ${nowTime}`);
+            session.history.push('▶️ **Retorno:** ' + nowTime);
+            updated = true;
             break;
 
         case 'btn_finish':
-            const duration = session.startTime ? Math.floor((Date.now() - session.startTime) / 60000) : 0;
-            session.history.push(`🛑 Fim: ${nowTime} (Duração: ${duration}min)`);
+            if (session.status === 'IDLE') return interaction.reply({ content: 'Inicie um turno primeiro.', ephemeral: true });
+            
+            const sessionDuration = session.startTime ? (Date.now() - session.startTime) : 0;
+            session.totalTime += sessionDuration;
+            session.history.push('🔴 **Fim:** ' + nowTime + ' (Turno de ' + Math.floor(sessionDuration / 60000) + ' min)');
             session.status = 'IDLE';
             session.startTime = null;
+            updated = true;
             break;
     }
 
-    activeSessions.set(userId, session);
+    if (updated) {
+        activeSessions.set(userId, session);
 
-    // Cores e Status
-    const colorMap = { 'WORKING': '#248046', 'PAUSED': '#FEE75C', 'IDLE': '#DA373C' };
-    const statusMap = { 'WORKING': '🟢 EM SERVIÇO', 'PAUSED': '🟡 EM PAUSA', 'IDLE': '🔴 FORA DE SERVIÇO' };
+        const statusMap = { 'WORKING': '🟢 EM SERVIÇO', 'PAUSED': '🟡 EM PAUSA', 'IDLE': '🔴 FORA DE SERVIÇO' };
+        const colorMap = { 'WORKING': '#248046', 'PAUSED': '#FEE75C', 'IDLE': '#DA373C' };
 
-    const newEmbed = new EmbedBuilder()
-        .setTitle('🚒 Bombeiros de Nickyville - Controle')
-        .setColor(colorMap[session.status])
-        .setTimestamp()
-        .addFields(
-            { name: '👤 Agente', value: `<@${userId}>`, inline: true },
-            { name: '📊 Status', value: `**${statusMap[session.status]}**`, inline: true },
-            { name: '📅 Histórico do Turno', value: session.history.join('\n') || 'Nenhuma ação registrada' }
-        );
+        const embed = new EmbedBuilder()
+            .setTitle('🚒 Controle de Ponto - Nickyville')
+            .setColor(colorMap[session.status])
+            .addFields(
+                { name: '👤 Agente', value: '<@' + userId + '>', inline: true },
+                { name: '📊 Estado', value: '**' + statusMap[session.status] + '**', inline: true },
+                { name: '📅 Histórico do Turno', value: session.history.join('\n') }
+            )
+            .setTimestamp();
 
-    const row = new ActionRowBuilder();
-    if (session.status === 'IDLE') {
-        row.addComponents(new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Novo Turno').setStyle(ButtonStyle.Success));
-        session.history = []; // Reseta histórico para o próximo turno
-    } else if (session.status === 'WORKING') {
-        row.addComponents(
-            new ButtonBuilder().setCustomId('btn_pause').setLabel('Pausar').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
-        );
-    } else if (session.status === 'PAUSED') {
-        row.addComponents(
-            new ButtonBuilder().setCustomId('btn_resume').setLabel('Retornar').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
-        );
+        const row = new ActionRowBuilder();
+        if (session.status === 'IDLE') {
+            row.addComponents(new ButtonBuilder().setCustomId('btn_start').setLabel('Iniciar Novo Turno').setStyle(ButtonStyle.Success));
+        } else if (session.status === 'WORKING') {
+            row.addComponents(
+                new ButtonBuilder().setCustomId('btn_pause').setLabel('Pausar').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
+            );
+        } else if (session.status === 'PAUSED') {
+            row.addComponents(
+                new ButtonBuilder().setCustomId('btn_resume').setLabel('Retornar').setStyle(ButtonStyle.Success),
+                new ButtonBuilder().setCustomId('btn_finish').setLabel('Finalizar').setStyle(ButtonStyle.Danger)
+            );
+        }
+
+        await interaction.update({ embeds: [embed], components: [row] });
     }
-
-    await interaction.update({ embeds: [newEmbed], components: [row] });
 });
 
-client.login(DISCORD_TOKEN);
+client.login(TOKEN);
