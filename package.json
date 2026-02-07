@@ -1,19 +1,22 @@
 {
-  "name": "guardian-bot-v5",
-  "version": "5.0.0",
-  "description": "Bot Seguro",
+  "name": "discord-time-tracker",
+  "version": "1.0.0",
+  "description": "A simple time tracking bot for Discord using slash commands and buttons.",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
+  "keywords": [
+    "discord",
+    "bot",
+    "ponto",
+    "discord.js"
+  ],
+  "author": "turzim",
+  "license": "ISC",
   "dependencies": {
-    "discord.js": "^14.16.3",
-    "dotenv": "^16.3.1",
-    "express": "^4.21.1",
-    "@google/genai": "*"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
   }
 }
