@@ -1,7 +1,7 @@
 {
   "name": "bombeiros-bot",
-  "version": "1.8.0",
-  "description": "Bot de Ponto - Nickyville - Comando !debug e Fix Anular",
+  "version": "1.9.0",
+  "description": "Bot de Ponto - Nickyville - Feito pelo turzim - Comando /Anular e !debug ativos",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": { "discord.js": "^14.14.1", "dotenv": "^16.4.5" }
