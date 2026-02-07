@@ -1,11 +1,8 @@
 {
   "name": "bombeiros-bot",
-  "version": "1.0.0",
-  "description": "Bot de bate-ponto para Discord",
+  "version": "1.1.0",
+  "description": "Bot de bate-ponto com anti-sleep e logs de horários",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
     "discord.js": "^14.14.0",
     "dotenv": "^16.4.5"
