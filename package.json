@@ -1,7 +1,7 @@
 {
-  "name": "bombeiros-bot",
-  "version": "1.9.0",
-  "description": "Bot de Ponto - Nickyville - Feito pelo turzim - Comando /Anular e !debug ativos",
+  "name": "multi-ponto-bot",
+  "version": "2.1.0",
+  "description": "Bot de Ponto Volumoso - Feito pelo turzim",
   "main": "index.js",
   "scripts": { "start": "node index.js" },
   "dependencies": { "discord.js": "^14.14.1", "dotenv": "^16.4.5" }
