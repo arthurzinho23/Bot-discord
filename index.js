@@ -1,336 +1,342 @@
-import { 
-    Client, 
-    GatewayIntentBits, 
-    Events, 
-    EmbedBuilder, 
-    Partials, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    PermissionFlagsBits,
-    AuditLogEvent
-} from 'discord.js';
+import { Client, GatewayIntentBits, InteractionType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, PermissionsBitField } from 'discord.js';
+import 'dotenv/config';
 
-import express from 'express';
-import https from 'https';
-import { GoogleGenAI } from "@google/genai";
+// --- Global Data Structures (In-memory Simulation) ---
+// Map<userId, { state: 'idle' | 'working' | 'paused', shiftStartTime: Date | null, pauseStartTime: Date | null, totalPausedTime: number }>
+const userStates = new Map();
+// Array of shift records: { userId, start: Date, end: Date | null, totalTime: number, records: [] }
+const userShifts = [];
 
-// --- CONFIGURAÇÃO ---
-const CONFIG = {
-    TOKEN: process.env.DISCORD_TOKEN,
-    GEMINI_KEY: process.env.GEMINI_API_KEY, 
-    
-    // CANAIS (IDs atualizados conforme solicitado)
-    ENTRY_CHANNEL: '1445105097796223078', 
-    EXIT_CHANNEL: '1445105144869032129',
-    
-    // Agora usando o canal solicitado para cotação
-    COTACAO_CHANNEL: '1445105097796223078',
-    
-    // CARGOS
-    BOOSTER_ROLE_ID: '1441086318229848185', // ID do Cargo Booster Atualizado
-    
-    MIN_AGE_DAYS: 7,
-    AUTO_KICK: false,
-    PORT: process.env.PORT || 3000
+// Placeholder for data logging (Since we cannot use a DB, we store history here)
+// Map<userId, [{ type: 'start' | 'pause' | 'resume' | 'end', time: Date }... ]>
+const userHistory = new Map();
+
+// Helper function to convert milliseconds to readable time
+const msToTime = (duration) => {
+  if (!duration || duration < 0) return "0h 0m";
+  const seconds = Math.floor((duration / 1000) % 60);
+  const minutes = Math.floor((duration / (1000 * 60)) % 60);
+  const hours = Math.floor((duration / (1000 * 60 * 60)));
+
+  const parts = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours === 0) parts.push(`${minutes}m`);
+  // if (seconds > 0) parts.push(`${seconds}s`);
+
+  return parts.join(' ');
 };
 
-// Função para extrair números (Melhorada para aceitar "50k", "1m", etc)
-function extrairValor(texto) {
-    if (!texto) return null;
-    // Remove pontos de milhar, R$, espaços extras
-    const clean = texto.toLowerCase().replace(/r$/g, '').replace(/./g, '').replace(/,/g, '.');
-    
-    // Suporte a 'k' (mil)
-    if (clean.includes('k')) {
-        const match = clean.match(/(\d+(\.\d+)?)k/);
-        return match ? parseFloat(match[1]) * 1000 : null;
-    }
-    // Suporte a 'm' (milhão)
-    if (clean.includes('m')) {
-        const match = clean.match(/(\d+(\.\d+)?)m/);
-        return match ? parseFloat(match[1]) * 1000000 : null;
-    }
-    
-    const match = clean.match(/(\d+)/);
-    return match ? parseInt(match[1]) : null;
-}
-
-// --- SERVIDOR WEB (Para o Render não desligar o bot) ---
-const app = express();
-app.get('/', (req, res) => res.send({ status: 'Guardian Online', version: '2.0.1 ESM' }));
-app.listen(CONFIG.PORT, () => {
-    console.log(`🌐 Sistema Online na porta ${CONFIG.PORT}`);
-    // Mantém o bot acordado se tiver URL externa
-    const renderUrl = process.env.RENDER_EXTERNAL_URL;
-    if (renderUrl) {
-        setInterval(() => {
-            https.get(renderUrl, () => {}).on('error', () => {});
-        }, 5 * 60 * 1000);
-    }
-});
-
-// --- IA ---
-let aiClient;
-if (CONFIG.GEMINI_KEY) {
-    try {
-        aiClient = new GoogleGenAI({ apiKey: CONFIG.GEMINI_KEY });
-        console.log('🧠 IA Gemini Conectada.');
-    } catch (err) { console.error('Erro ao conectar IA:', err.message); }
-}
-
+// --- Bot Setup ---
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildModeration
-    ],
-    partials: [
-        Partials.GuildMember, 
-        Partials.User, 
-        Partials.Channel, // Necessário para Fóruns
-        Partials.Message
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages
+  ]
 });
 
-// =========================================================
-// 📌 SISTEMA PRINCIPAL
-// =========================================================
-client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot) return;
+const CLIENT_ID = process.env.CLIENT_ID;
 
-    // 🔒 COMANDOS DE SEGURANÇA
-    if (message.content === '!lock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
-        if (message.channel.isThread()) {
-             await message.channel.setLocked(true);
-             return message.reply('🔒 Tópico trancado.');
-        }
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: false });
-        return message.reply('🔒 **BLOQUEIO DE EMERGÊNCIA:** Este canal foi trancado.');
-    }
+client.on('ready', async () => {
+  console.log(`Logged in as ${client.user.tag}!`);
 
-    if (message.content === '!unlock') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageChannels)) 
-            return message.reply('❌ Sem permissão.');
-        
-        if (message.channel.isThread()) {
-             await message.channel.setLocked(false);
-             return message.reply('🔓 Tópico destrancado.');
-        }
-        await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, { SendMessages: true });
-        return message.reply('🔓 **DESBLOQUEADO:** O canal está aberto novamente.');
-    }
+  // Register Commands
+  const commands = [
+    new SlashCommandBuilder()
+      .setName('ponto')
+      .setDescription('Inicia, pausa ou finaliza seu turno de trabalho.'),
+    new SlashCommandBuilder()
+      .setName('ranking')
+      .setDescription('Exibe o ranking de horas trabalhadas.')
+  ].map(command => command.toJSON());
 
-    // 💰 SISTEMA DE COTAÇÃO
-    // Verifica ID do canal ou se é um tópico dentro do canal de cotação
-    const isCotacaoChannel = 
-        message.channel.id === CONFIG.COTACAO_CHANNEL || 
-        message.channel.parentId === CONFIG.COTACAO_CHANNEL;
-
-    if (isCotacaoChannel) {
-        // Se for tópico, tenta ler o valor do título também
-        let textToAnalyze = message.content;
-        if (message.channel.isThread()) {
-            textToAnalyze += ' ' + message.channel.name;
-        }
-
-        const valorVeiculo = extrairValor(textToAnalyze);
-
-        if (valorVeiculo && valorVeiculo > 0) {
-            await message.channel.sendTyping();
-
-            // Verifica cargo Booster
-            const isBooster = message.member.roles.cache.has(CONFIG.BOOSTER_ROLE_ID);
-            const porcentagem = isBooster ? 10 : 15;
-
-            const taxa = valorVeiculo * (porcentagem / 100);
-            const valorFinal = valorVeiculo + taxa;
-
-            const fmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-
-            // Configuração Visual
-            const cor = isBooster ? 0xFF73FA : 0x2B2D31; // Rosa para Booster, Cinza padrão
-            const titulo = isBooster ? '🚀 Cotação Booster Aplicada' : '📋 Cotação Padrão';
-            const rodape = isBooster ? 'Benefício de taxa reduzida ativo.' : 'Dica: Boosters pagam apenas 10% de taxa.';
-
-            const embed = new EmbedBuilder()
-                .setColor(cor)
-                .setTitle(titulo)
-                .setDescription(`Cálculo automático para **${message.author.username}**`)
-                .addFields(
-                    { name: 'Valor Base', value: `\`${fmt.format(valorVeiculo)}\``, inline: true },
-                    { name: `Taxa (${porcentagem}%)`, value: `\`+ ${fmt.format(taxa)}\``, inline: true },
-                    { name: '💰 VALOR FINAL DO VEÍCULO', value: `## ${fmt.format(valorFinal)}`, inline: false }
-                )
-                .setFooter({ text: rodape })
-                .setTimestamp();
-
-            try {
-                return await message.reply({ embeds: [embed] });
-            } catch (err) {
-                console.error('Erro ao enviar cotação:', err);
-            }
-        }
-    }
-
-    // 🤖 CHAT COM IA
-    if (message.mentions.has(client.user)) {
-        if (!aiClient) return message.reply("⚠️ **Erro:** Minha API Key não foi configurada.");
-
-        await message.channel.sendTyping();
-
-        try {
-            const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-            const systemPrompt = `
-Você é o Guardião de NewVille, um bot moderador engraçado, direto e zoeiro.
-Fale como alguém que faz piada de tudo mas ainda ajuda rápido e sem enrolar.
-Nada de linguagem formal, não fale como robô, responda curto, engraçado e útil.
-O servidor se passa nos EUA.
-`;
-
-            const response = await aiClient.models.generateContent({
-                model: 'gemini-2.5-flash',
-                contents: prompt,
-                config: { systemInstruction: systemPrompt }
-            });
-
-            await message.reply(response.text || "Não consegui responder isso não, parça.");
-        } catch (error) {
-            console.error("Erro IA:", error);
-            message.reply("❌ Deu ruim aqui, tenta de novo depois.");
-        }
-    }
+  // NOTE: In a production bot, use client.application.commands.set or register guild commands during development.
+  await client.application.commands.set(commands);
 });
 
-// =========================================================
-// 👋 SISTEMA DE ENTRADA (ADMIN LOG)
-// =========================================================
-client.on(Events.GuildMemberAdd, async member => {
-    try {
-        let channel = member.guild.channels.cache.get(CONFIG.ENTRY_CHANNEL);
-        // Tenta buscar se não estiver em cache
-        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.ENTRY_CHANNEL); } catch(e) {}
+// --- Core Logic Functions ---
 
-        if (!channel?.isTextBased()) return;
+// Calculates the total time worked for a currently active state
+const calculateCurrentWorkDuration = (state) => {
+    if (state.state === 'idle' || !state.shiftStartTime) return 0;
+    
+    let duration = Date.now() - state.shiftStartTime.getTime();
 
-        const createdAt = member.user.createdAt;
-        const diffDays = Math.floor((Date.now() - createdAt) / 86400000);
-        const isSuspicious = diffDays < CONFIG.MIN_AGE_DAYS;
-        const dateString = createdAt.toLocaleDateString('pt-BR');
+    if (state.state === 'paused') {
+        // If paused, the duration stops at the pause start time
+        duration = state.pauseStartTime.getTime() - state.shiftStartTime.getTime();
+    } else if (state.state === 'working' && state.totalPausedTime > 0) {
+        // Subtract accumulated pause time
+        duration -= state.totalPausedTime;
+    }
 
-        const embed = new EmbedBuilder()
-            .setColor(isSuspicious ? 0xED4245 : 0x57F287) // Vermelho se for nova, Verde se ok
-            .setAuthor({ name: `${member.user.tag} Entrou`, iconURL: member.user.displayAvatarURL() })
-            .setTitle(isSuspicious ? '⛔ CONTA DE RISCO (Nova)' : '✅ Entrada Segura')
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .addFields(
-                { name: '👤 Membro', value: `${member} (${member.id})` },
-                { name: '📅 Conta criada em', value: dateString },
-                { name: '⏳ Idade da conta', value: `${diffDays} dias` }
-            )
-            .setFooter({ text: `Total de membros: ${member.guild.memberCount}` })
-            .setTimestamp();
+    return duration;
+};
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`kick_${member.id}`).setLabel('Expulsar').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId(`ban_${member.id}`).setLabel('Banir').setStyle(ButtonStyle.Danger)
-        );
+// Registers an action in the history
+const logAction = (userId, type) => {
+    const entry = { type, time: new Date() };
+    if (!userHistory.has(userId)) {
+        userHistory.set(userId, []);
+    }
+    userHistory.get(userId).push(entry);
+    console.log(`[LOG] User ${userId} action: ${type} at ${entry.time.toISOString()}`);
+}
 
-        await channel.send({
-            content: isSuspicious ? `||@here|| 🚨 Conta suspeita detectada!` : null,
-            embeds: [embed],
-            components: isSuspicious ? [row] : []
+// --- Embed and Component Builders ---
+
+const createPontoEmbed = (userId) => {
+  let state = userStates.get(userId);
+  
+  if (!state) {
+    // Initialize new state if user hasn't interacted yet
+    state = { state: 'idle', shiftStartTime: null, pauseStartTime: null, totalPausedTime: 0 };
+    userStates.set(userId, state);
+  }
+
+  let description;
+  let color;
+  let workDuration = calculateCurrentWorkDuration(state);
+
+  switch (state.state) {
+    case 'working':
+      description = `Você está **EM TURNO** há ${msToTime(workDuration)}.
+Clique em Pausar para iniciar um intervalo ou Finalizar para encerrar o expediente.`;
+      color = 0x00FF00; // Green
+      break;
+    case 'paused':
+      // Calculate accumulated pause time including the current active pause duration
+      const currentPauseDuration = Date.now() - state.pauseStartTime.getTime();
+      const totalEffectivePaused = state.totalPausedTime + currentPauseDuration;
+      
+      description = `Você está **EM PAUSA** (Total Pausado: ${msToTime(totalEffectivePaused)}).
+Clique em Retomar para voltar ao trabalho.`;
+      color = 0xFFFF00; // Yellow
+      break;
+    case 'idle':
+    default:
+      description = 'Você está **FORA DE TURNO**.
+Clique em Iniciar Ponto para começar o seu expediente.';
+      color = 0xAAAAAA; // Gray
+      break;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🚨 Bombeiros de Nickyville - Sistema de Ponto 🚨')
+    .setDescription(description)
+    .setColor(color)
+    .setFooter({ text: 'feito pelo turzim' });
+
+  return { embed, state };
+};
+
+const createPontoButtons = (currentState) => {
+  const row = new ActionRowBuilder();
+
+  // Determine text and style for the primary toggle button (Pause/Resume/Start)
+  let primaryButton;
+  
+  if (currentState === 'working') {
+    primaryButton = new ButtonBuilder()
+      .setCustomId('ponto_pause_resume')
+      .setLabel('⏸️ Pausar Ponto')
+      .setStyle(ButtonStyle.Secondary);
+      
+  } else if (currentState === 'paused') {
+    primaryButton = new ButtonBuilder()
+      .setCustomId('ponto_pause_resume')
+      .setLabel('▶️ Retomar Ponto')
+      .setStyle(ButtonStyle.Primary);
+      
+  } else { // idle
+    primaryButton = new ButtonBuilder()
+      .setCustomId('ponto_start')
+      .setLabel('✅ Iniciar Ponto')
+      .setStyle(ButtonStyle.Success);
+  }
+
+  row.addComponents(primaryButton);
+
+  // Add Finalizar button (only available if working or paused)
+  if (currentState !== 'idle') {
+    const finishButton = new ButtonBuilder()
+      .setCustomId('ponto_finish')
+      .setLabel('🛑 Finalizar Ponto')
+      .setStyle(ButtonStyle.Danger);
+    row.addComponents(finishButton);
+  }
+
+  return row;
+};
+
+// --- Command Handlers ---
+
+client.on('interactionCreate', async interaction => {
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName === 'ponto') {
+      const userId = interaction.user.id;
+      const { embed, state } = createPontoEmbed(userId);
+      const row = createPontoButtons(state.state);
+
+      await interaction.reply({
+        embeds: [embed],
+        components: [row],
+        ephemeral: true // Keep the initial command response private
+      });
+
+    } else if (interaction.commandName === 'ranking') {
+      await handleRankingCommand(interaction);
+    }
+  }
+
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('ponto_')) {
+      await handlePontoButton(interaction);
+    }
+  }
+});
+
+// --- Button Interaction Handler ---
+
+async function handlePontoButton(interaction) {
+  const userId = interaction.user.id;
+  let state = userStates.get(userId);
+
+  if (!state) {
+    return interaction.update({ content: 'Erro: Seu estado de ponto não foi encontrado. Tente /ponto novamente.', components: [] });
+  }
+
+  const now = new Date();
+
+  try {
+    switch (interaction.customId) {
+      case 'ponto_start':
+        if (state.state !== 'idle') {
+          return interaction.reply({ content: 'Você já está em turno ou pausado.', ephemeral: true });
+        }
+        // Start Shift
+        state.state = 'working';
+        state.shiftStartTime = now;
+        state.totalPausedTime = 0;
+        state.pauseStartTime = null;
+        logAction(userId, 'start');
+        break;
+
+      case 'ponto_pause_resume':
+        if (state.state === 'working') {
+          // Pause Shift
+          state.state = 'paused';
+          state.pauseStartTime = now;
+          logAction(userId, 'pause');
+
+        } else if (state.state === 'paused') {
+          // Resume Shift
+          if (state.pauseStartTime) {
+            // Calculate time spent paused since the last pause command
+            const currentPauseDuration = now.getTime() - state.pauseStartTime.getTime();
+            state.totalPausedTime += currentPauseDuration;
+            state.pauseStartTime = null;
+          }
+          state.state = 'working';
+          logAction(userId, 'resume');
+
+        } else { // idle
+          return interaction.reply({ content: 'Você precisa iniciar o ponto primeiro.', ephemeral: true });
+        }
+        break;
+
+      case 'ponto_finish':
+        if (state.state === 'idle') {
+          return interaction.reply({ content: 'Seu ponto já está finalizado.', ephemeral: true });
+        }
+        
+        // Finalize Shift
+        logAction(userId, 'end');
+        
+        // 1. If currently paused, calculate the pause time before finalizing.
+        if (state.state === 'paused' && state.pauseStartTime) {
+          const currentPauseDuration = now.getTime() - state.pauseStartTime.getTime();
+          state.totalPausedTime += currentPauseDuration;
+        }
+
+        // 2. Calculate final work duration
+        const totalDurationMs = now.getTime() - state.shiftStartTime.getTime();
+        const effectiveWorkDuration = totalDurationMs - state.totalPausedTime;
+
+        // 3. Log the completed shift
+        userShifts.push({
+            userId: userId,
+            start: state.shiftStartTime,
+            end: now,
+            totalTime: effectiveWorkDuration,
+            records: userHistory.get(userId) || []
         });
-    } catch (e) { console.error('Erro Entrada:', e); }
-});
 
-// =========================================================
-// 📤 SISTEMA DE SAÍDA (ADMIN LOG)
-// =========================================================
-client.on(Events.GuildMemberRemove, async member => {
-    try {
-        let channel = member.guild.channels.cache.get(CONFIG.EXIT_CHANNEL);
-        if (!channel) try { channel = await member.guild.channels.fetch(CONFIG.EXIT_CHANNEL); } catch(e) {}
-        if (!channel?.isTextBased()) return;
-
-        // Pequeno delay para garantir que o Audit Log atualize
-        await new Promise(r => setTimeout(r, 2000));
-
-        let reason = 'Saiu por conta própria';
-        let color = 0xFEE75C; // Amarelo
-        let icon = '👋';
-        let executor = null;
-
-        try {
-            const kickLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberKick });
-            const kickLog = kickLogs.entries.first();
-
-            // Verifica se o kick aconteceu nos últimos 5 segundos
-            if (kickLog && kickLog.target.id === member.id && (Date.now() - kickLog.createdTimestamp) < 10000) {
-                reason = '👢 Expulso (Kick)';
-                color = 0xE67E22; // Laranja
-                icon = '👢';
-                executor = kickLog.executor;
-            } else {
-                const banLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.MemberBanAdd });
-                const banLog = banLogs.entries.first();
-
-                if (banLog && banLog.target.id === member.id && (Date.now() - banLog.createdTimestamp) < 10000) {
-                    reason = '🔨 Banido';
-                    color = 0xED4245; // Vermelho
-                    icon = '🚫';
-                    executor = banLog.executor;
-                }
-            }
-        } catch (e) { console.error('Erro audit log:', e); }
-
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setAuthor({ name: `Saída: ${member.user.tag}`, iconURL: member.user.displayAvatarURL() })
-            .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 256 }))
-            .setDescription(`${icon} **${reason}**`)
-            .addFields(
-                { name: '👤 Membro', value: `${member.user.tag}`, inline: true },
-                { name: '🆔 ID', value: `${member.id}`, inline: true }
-            )
-            .setTimestamp();
-
-        if (executor) {
-            embed.addFields({ name: '👮 Executor', value: `${executor.tag}` });
-        }
-
-        channel.send({ embeds: [embed] });
-
-    } catch (e) { console.error('Erro saída:', e); }
-});
-
-// =========================================================
-// 🔘 SISTEMA DE BOTÕES
-// =========================================================
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isButton()) return;
-    if (!interaction.member.permissions.has(PermissionFlagsBits.KickMembers))
-        return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
-
-    const [action, targetId] = interaction.customId.split('_');
-
-    try {
-        if (action === 'kick') {
-            await interaction.guild.members.kick(targetId, 'Bot Action');
-            interaction.reply({ content: '👢 Membro expulso.', ephemeral: true });
-        }
-        if (action === 'ban') {
-            await interaction.guild.members.ban(targetId);
-            interaction.reply({ content: '🚫 Membro banido.', ephemeral: true });
-        }
-    } catch (e) {
-        interaction.reply({ content: '❌ Erro ao executar punição.', ephemeral: true });
+        // 4. Reset state
+        state.state = 'idle';
+        state.shiftStartTime = null;
+        state.pauseStartTime = null;
+        state.totalPausedTime = 0;
+        userHistory.delete(userId); // Clear session history
+        
+        // Inform user about the recorded time
+        await interaction.user.send(`✅ Ponto finalizado! Você trabalhou um total de ${msToTime(effectiveWorkDuration)} neste turno.`);
+        break;
+        
+      default:
+        return interaction.reply({ content: 'Ação inválida.', ephemeral: true });
     }
-});
 
-client.login(CONFIG.TOKEN);
+    // After state change, regenerate and update the message
+    const { embed: updatedEmbed, state: updatedState } = createPontoEmbed(userId);
+    const updatedRow = createPontoButtons(updatedState.state);
+
+    // Use update if responding to a button press, preserving ephemerality
+    await interaction.update({
+      embeds: [updatedEmbed],
+      components: [updatedRow]
+    });
+
+  } catch (error) {
+    console.error(error);
+    await interaction.reply({ content: 'Ocorreu um erro ao processar sua ação de ponto.', ephemeral: true });
+  }
+}
+
+async function handleRankingCommand(interaction) {
+    // Aggregate total time worked for all users
+    const rankingMap = new Map(); // Map<userId, totalMs>
+
+    userShifts.forEach(shift => {
+        const currentTotal = rankingMap.get(shift.userId) || 0;
+        rankingMap.set(shift.userId, currentTotal + shift.totalTime);
+    });
+    
+    // Sort the ranking
+    const sortedRanking = Array.from(rankingMap.entries())
+        .sort((a, b) => b[1] - a[1]) // Sort descending by total time
+        .slice(0, 10); // Top 10
+        
+    if (sortedRanking.length === 0) {
+        return interaction.reply({ content: 'Nenhum registro de turno encontrado ainda.', ephemeral: true });
+    }
+    
+    let rankingDescription = '';
+    
+    for (let i = 0; i < sortedRanking.length; i++) {
+        const [userId, totalTime] = sortedRanking[i];
+        const member = interaction.guild.members.cache.get(userId);
+        const userName = member ? member.displayName : `Usuário Desconhecido (${userId})`;
+        
+        rankingDescription += `**${i + 1}.** ${userName}: ${msToTime(totalTime)}\n`;
+    }
+    
+    const embed = new EmbedBuilder()
+        .setTitle('🏆 Ranking de Horas Trabalhadas')
+        .setDescription(rankingDescription)
+        .setColor(0x00BFFF) // Blue
+        .setFooter({ text: 'feito pelo turzim' });
+        
+    await interaction.reply({ embeds: [embed] });
+}
+
+client.login(process.env.DISCORD_TOKEN);
