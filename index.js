@@ -15,9 +15,12 @@ require('dotenv').config();
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
-const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY;
+// Guidelines: Obtain API key exclusively from process.env.API_KEY
+const API_KEY = process.env.API_KEY;
+const PREFIX = '!';
 
 // Inicialização da IA (Gemini)
+// Guidelines: Must use new GoogleGenAI({ apiKey: process.env.API_KEY })
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const getBrasiliaTime = () => {
@@ -71,14 +74,32 @@ client.once('ready', async () => {
     }
 });
 
-// IA Responde a menções
+// IA Responde a menções e Comandos de Prefixo
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
+
+    // Comando !debug
+    if (message.content.toLowerCase() === PREFIX + 'debug') {
+        const embed = new EmbedBuilder()
+            .setTitle('🛠️ Painel de Diagnóstico (Prefixo)')
+            .addFields(
+                { name: '🤖 Status do Bot', value: '🟢 Operacional', inline: true },
+                { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
+                { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 3 Flash)', inline: true },
+                { name: '🌐 Servidor (Render)', value: `Saudável (Porta ${PORT})`, inline: false }
+            )
+            .setColor('#DA373C')
+            .setFooter({ text: 'feito pelo turzim' });
+        return message.reply({ embeds: [embed] });
+    }
+
+    // Resposta por menção com IA
     if (message.mentions.has(client.user.id)) {
         await message.channel.sendTyping();
-        const prompt = message.content.replace(/<@!?d+>/g, '').trim();
+        const prompt = message.content.replace(/<@!?\d+>/g, '').trim();
         
         try {
+            // Guidelines: use ai.models.generateContent with model name and prompt
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: prompt || 'Olá!',
@@ -86,6 +107,7 @@ client.on('messageCreate', async message => {
                     systemInstruction: "Você é a secretária inteligente do Nickyville. Seu dono é o Turzim. Responda de forma prestativa e mencione que o Turzim é um mestre da programação."
                 }
             });
+            // Guidelines: Extract text using .text property on response
             await message.reply(response.text);
         } catch (e) {
             message.reply('Houve um erro no meu núcleo de IA, mas o Turzim já está verificando!');
@@ -122,12 +144,12 @@ client.on('interactionCreate', async interaction => {
 
         if (interaction.commandName === 'debug') {
             const embed = new EmbedBuilder()
-                .setTitle('🛠️ Painel de Diagnóstico')
+                .setTitle('🛠️ Painel de Diagnóstico (Slash)')
                 .addFields(
                     { name: '🤖 Status do Bot', value: '🟢 Operacional', inline: true },
                     { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
-                    { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 2.0)', inline: true },
-                    { name: '🌐 Servidor (Render)', value: 'Saudável (Porta ${PORT})', inline: false }
+                    { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 3 Flash)', inline: true },
+                    { name: '🌐 Servidor (Render)', value: `Saudável (Porta ${PORT})`, inline: false }
                 )
                 .setColor('#DA373C')
                 .setFooter({ text: 'feito pelo turzim' });
