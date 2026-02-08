@@ -15,10 +15,10 @@ require('dotenv').config();
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.API_KEY || process.env.GEMINI_API_KEY;
 
-// Inicialização da IA
-const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
+// Inicialização da IA (Gemini)
+const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const getBrasiliaTime = () => {
     return new Date().toLocaleString("pt-BR", { 
@@ -27,13 +27,12 @@ const getBrasiliaTime = () => {
     });
 };
 
-// --- SERVIDOR WEB PARA O RENDER (CRÍTICO) ---
-// O Render precisa que uma porta seja aberta para manter o deploy "Live"
+// --- SERVIDOR PARA O RENDER (Obrigatório) ---
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot de Ponto IA: Online e Operacional');
+    res.end('Bot Online - Nickyville System');
 }).listen(PORT, () => {
-    console.log('Servidor de Uptime rodando na porta: ' + PORT);
+    console.log('Servidor de rede ativo na porta: ' + PORT);
 });
 
 const client = new Client({
@@ -44,11 +43,11 @@ const client = new Client({
     ]
 });
 
-// Registro de Comandos Slash
+// Registrar Comandos Slash
 const commands = [
     {
         name: 'ponto',
-        description: 'Bater o ponto (Iniciar/Pausar/Sair)',
+        description: 'Abrir o painel de frequência (Bater Ponto)',
     },
     {
         name: 'ranking',
@@ -57,18 +56,18 @@ const commands = [
 ];
 
 client.once('ready', async () => {
-    console.log('✅ Bot logado como: ' + client.user.tag);
+    console.log('✅ ' + client.user.tag + ' está online!');
     
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('🚀 Comandos slash registrados com sucesso globalmente.');
+        console.log('🚀 Comandos slash sincronizados.');
     } catch (error) {
         console.error('Erro ao registrar comandos:', error);
     }
 });
 
-// IA Intelligence - Resposta a menções
+// IA Responde a menções
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
     if (message.mentions.has(client.user.id)) {
@@ -76,27 +75,26 @@ client.on('messageCreate', async message => {
         const prompt = message.content.replace(/<@!?d+>/g, '').trim();
         
         try {
-            const result = await ai.models.generateContent({
+            const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: prompt || 'Olá!',
                 config: {
-                    systemInstruction: "Você é a secretária inteligente. Seu dono é o Turzim. Seja educada, eficiente e mencione que o Turzim é um gênio da programação."
+                    systemInstruction: "Você é a secretária inteligente do Nickyville. Seu dono é o Turzim. Responda de forma prestativa e mencione que o Turzim é um mestre da programação."
                 }
             });
-            await message.reply(result.text);
+            await message.reply(response.text);
         } catch (e) {
-            message.reply('Houve um erro no meu cérebro de IA. Avisando o Turzim!');
+            message.reply('Houve um erro no meu núcleo de IA, mas o Turzim já está verificando!');
         }
     }
 });
 
-// Lógica de Comandos e Botões
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
             const embed = new EmbedBuilder()
-                .setTitle('🕒 Registro de Ponto')
-                .setDescription(`Olá **${interaction.user.username}**, o que deseja fazer?\n\n**Status Atual:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
+                .setTitle('🕒 Registro de Ponto - Nickyville')
+                .setDescription(`Olá **${interaction.user.username}**, o que deseja fazer agora?\n\n**Status Atual:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
                 .setColor('#5865F2')
                 .setThumbnail(interaction.user.displayAvatarURL())
                 .setFooter({ text: 'feito pelo turzim' });
@@ -112,7 +110,7 @@ client.on('interactionCreate', async interaction => {
         if (interaction.commandName === 'ranking') {
             const embed = new EmbedBuilder()
                 .setTitle('🏆 Ranking de Atividade')
-                .setDescription('O ranking está sendo processado pela IA e sincronizado com o banco de dados.')
+                .setDescription('O ranking global está sendo atualizado via banco de dados...')
                 .setColor('#FEE75C')
                 .setFooter({ text: 'feito pelo turzim' });
             await interaction.reply({ embeds: [embed] });
@@ -120,9 +118,8 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.isButton()) {
-        // Resposta rápida para evitar erro de "Interação falhou"
         await interaction.reply({ 
-            content: 'Ação registrada! No seu código real, aqui você conectaria com o MongoDB para salvar o tempo.', 
+            content: '✅ Ação registrada no sistema! No código de produção, aqui salvamos no MongoDB.', 
             ephemeral: true 
         });
     }
