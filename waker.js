@@ -1,33 +1,44 @@
-// --- WAKER.JS: MANTENHA O BOT ACORDADO ---
-// Este script é essencial para plataformas como Render, Replit ou Glitch.
-// Ele faz um "ping" no servidor HTTP do bot a cada 5 minutos para impedir que ele entre em suspensão.
+// --- WAKER.JS: SISTEMA ANTI-SONO ---
+// Este script é importado automaticamente pelo index.js.
+// Ele pinga o próprio bot a cada 3 minutos para evitar que o Render/Replit o coloque em suspensão (Sleep Mode).
 
 import https from 'https';
 import http from 'http';
-import 'dotenv/config';
 
-// Tenta pegar a URL externa (Render/Heroku) ou usa localhost
+// Tenta pegar a URL externa (Render/Heroku) ou usa localhost como fallback
+// DICA: No Render, configure a variável de ambiente RENDER_EXTERNAL_URL com a url do seu app (ex: https://meu-bot.onrender.com)
 const URL = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 
-console.log(`⏰ Waker iniciado! Vou manter o bot acordado pingando: ${URL}`);
+console.log(`⏰ [WAKER] Sistema de vigília iniciado. Alvo: ${URL}`);
 
 const ping = () => {
-    const protocol = URL.startsWith('https') ? https : http;
+    const isHttps = URL.startsWith('https');
+    const protocol = isHttps ? https : http;
     
+    const start = Date.now();
     const req = protocol.get(URL, (res) => {
-        console.log(`[PING] ${new Date().toLocaleTimeString('pt-BR')} - Status: ${res.statusCode} - Bot Acordado!`);
+        const duration = Date.now() - start;
+        // Apenas loga se o status for 200 para não poluir, ou se for erro
+        if (res.statusCode === 200) {
+            // Ping silencioso para sucesso
+            // console.log(`[WAKER] Ping OK (${duration}ms) - Bot acordado.`);
+        } else {
+            console.warn(`[WAKER] Aviso: Recebido status ${res.statusCode} do servidor.`);
+        }
     });
 
     req.on('error', (err) => {
-        console.error(`[ERRO] Falha ao acordar o bot: ${err.message}`);
+        console.error(`[WAKER] ERRO AO PINGAR: ${err.message}. Verifique se o bot está rodando.`);
     });
     
     req.end();
 };
 
-// Ping imediato ao iniciar
-ping();
+// Ping inicial (aguarda 5s para o server subir)
+setTimeout(ping, 5000);
 
-// Repetir a cada 5 minutos (300.000ms)
-// A maioria dos free tiers dorme após 15min de inatividade.
-setInterval(ping, 300000);
+// Pinga a cada 3 minutos (180.000ms) - Mais frequente que os 15min de timeout padrão
+setInterval(() => {
+    console.log(`[WAKER] Enviando ping de manutenção...`);
+    ping();
+}, 180000);
