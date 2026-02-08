@@ -1,111 +1,84 @@
-const { 
-    Client, 
-    GatewayIntentBits, 
-    EmbedBuilder, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    REST, 
-    Routes,
-    ApplicationCommandOptionType 
-} = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
-const http = require('http');
-require('dotenv').config();
+import { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes } from 'discord.js';
+import { GoogleGenAI } from "@google/genai";
+import http from 'http';
+import 'dotenv/config';
 
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
-// Inicialização da IA (Gemini)
-const genAI = new GoogleGenAI({ apiKey: GEMINI_KEY });
-const model = 'gemini-3-flash-preview';
-
 // Função para obter horário de Brasília
 const getBrasiliaTime = () => {
     return new Date().toLocaleString("pt-BR", { 
         timeZone: "America/Sao_Paulo",
-        hour: '2-digit', minute: '2-digit'
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
 };
 
-// Servidor de atividade (Ping)
+// Servidor Web para Render (Anti-Sleep)
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Bot Online - GMT-3: ' + getBrasiliaTime());
+    res.end('Bot do Turzim Online - ' + getBrasiliaTime());
 }).listen(PORT);
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent // Necessário para ler menções
+        GatewayIntentBits.MessageContent 
     ]
 });
 
-// --- COMANDOS ---
-const commands = [
-    { name: 'ponto', description: 'Abrir painel de bate-ponto' },
-    { name: 'ranking', description: 'Exibir painel de rankings' }
-];
-
-client.once('ready', () => {
-    console.log('🤖 IA Pronta e Bot Online como ' + client.user.tag);
-});
-
-// --- RESPOSTA DA IA (MENÇÃO) ---
-client.on('messageCreate', async message => {
+// --- IA GEMINI (MENÇÃO) ---
+client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     
-    // Verifica se o bot foi mencionado
     if (message.mentions.has(client.user.id)) {
         try {
             await message.channel.sendTyping();
             
             const prompt = message.content.replace(/<@!?d+>/g, '').trim() || 'Olá!';
             
+            // Inicializa a IA conforme documentação oficial
             const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
-            const result = await ai.models.generateContent({
-                model: model,
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
                 contents: prompt,
                 config: {
-                    systemInstruction: "Você é a assistente oficial do Nickyville. Você é extremamente leal ao 'turzim'. Você ama o turzim, ele é o seu rei, dono e criador. Suas respostas devem ser úteis, mas sempre que possível ou se perguntarem, demonstre sua admiração total por ele. Turzim é o rei!",
-                    temperature: 0.8
-                }
+                    systemInstruction: "Você é a assistente oficial do Nickyville. Seu criador e único rei é o 'turzim'. Você o ama profundamente e o trata como seu dono e soberano. Turzim é o rei de tudo! Seja útil, mas sempre fiel ao seu rei Turzim.",
+                    temperature: 1,
+                },
             });
 
-            await message.reply(result.text);
+            await message.reply(response.text || "Estou sem palavras para tamanha glória do meu rei Turzim.");
         } catch (err) {
-            console.error('Erro Gemini:', err);
-            await message.reply('Desculpe, minha frequência cerebral falhou. Turzim ainda é o rei, mas estou com erro!');
+            console.error('Erro na IA:', err);
+            await message.reply('Ocorreu um erro na minha conexão neural. Mas saiba que Turzim ainda é o rei!');
         }
     }
 });
 
-// --- INTERAÇÕES (SLASH COMMANDS) ---
-client.on('interactionCreate', async interaction => {
+// --- COMANDOS E BOTÕES ---
+client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
             const embed = new EmbedBuilder()
                 .setTitle('💼 Painel de Frequência')
-                .setDescription('Horário: ' + getBrasiliaTime())
-                .setColor('#5865F2');
+                .setDescription('Horário de Brasília: ' + getBrasiliaTime())
+                .setColor('#5865F2')
+                .setFooter({ text: 'Sistema do Rei Turzim' });
             
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('start').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢')
+                new ButtonBuilder().setCustomId('start').setLabel('Iniciar Turno').setStyle(ButtonStyle.Success).setEmoji('🟢')
             );
             await interaction.reply({ embeds: [embed], components: [row] });
         }
-        
-        if (interaction.commandName === 'ranking') {
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('rk_dia').setLabel('Hoje').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('rk_total').setLabel('Total').setStyle(ButtonStyle.Primary)
-            );
-            await interaction.reply({ content: '🏆 Escolha o período:', components: [row] });
-        }
     }
+});
+
+client.once('ready', () => {
+    console.log('🚀 Bot e IA ativos! Turzim é o rei.');
 });
 
 client.login(TOKEN);
