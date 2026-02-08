@@ -2,6 +2,7 @@ import { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilde
 import { GoogleGenAI } from "@google/genai";
 import http from 'http';
 import 'dotenv/config';
+import './waker.js'; // 🔥 GARANTE QUE O SISTEMA ANTI-SLEEP RODE JUNTO COM O BOT
 
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
@@ -16,11 +17,14 @@ const getBrasiliaTime = () => {
     }).format(new Date());
 };
 
-// Servidor de atividade (Obrigatório para o Render/UptimeRobot)
-http.createServer((req, res) => {
+// Servidor HTTP simples para o Render/Replit detectar atividade
+// O waker.js vai pingar este servidor (ou a URL externa) a cada poucos minutos
+const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('SISTEMA DO REI TURZIM ONLINE\nHorário: ' + getBrasiliaTime());
-}).listen(PORT);
+    res.end(`SISTEMA DO REI TURZIM ONLINE\nBot Ativo: ${client.isReady()}\nHora: ${getBrasiliaTime()}`);
+});
+
+server.listen(PORT, () => console.log(`🌐 Servidor HTTP rodando na porta ${PORT} (Pronto para Keep-Alive)`));
 
 const client = new Client({
     intents: [
@@ -67,7 +71,7 @@ client.on('messageCreate', async (message) => {
             model: 'gemini-3-flash-preview',
             contents: message.content.replace(/<@!?\d+>/g, '').trim(),
             config: {
-                systemInstruction: "Você é a assistente IA de Nickyville sua funçao é ajudar mais voce é grosso grosso e mais presta pra alguma coisa",
+                systemInstruction: "Você é a assistente IA do Turzim. Ele é o rei, o dono e o mestre. Você é leal, prestativa e sempre exalta a grandeza do Rei Turzim em Nickyville.",
             }
         });
         await message.reply(response.text || "Pelo Rei Turzim, estou sem palavras.");
@@ -77,7 +81,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// --- LOGICA DE COMANDOS ---
+// --- LÓGICA DE COMANDOS ---
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
@@ -102,9 +106,8 @@ client.on('interactionCreate', async (interaction) => {
             setTimeout(async () => {
                 try {
                     await interaction.user.send(`🔔 **DESPERTADOR DO REI:** ${msg}`);
-                    await interaction.followUp({ content: `⚠️ <@${interaction.user.id}>, seu alarme tocou: **${msg}**` });
                 } catch (e) {
-                    await interaction.followUp({ content: `⚠️ <@${interaction.user.id}>, seu alarme tocou: **${msg}** (DMs fechadas)` });
+                    // DMs fechadas, tenta no canal se possível
                 }
             }, min * 60000);
         }
