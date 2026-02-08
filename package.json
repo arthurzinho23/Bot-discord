@@ -1,14 +1,1 @@
-{
-  "name": "bot-ponto-ia",
-  "version": "3.0.0",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "waker": "node waker.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "@google/genai": "^1.40.0",
-    "dotenv": "^16.4.5"
-  }
-}
+{ "dependencies": { "discord.js": "^14.14.1", "@google/genai": "^1.40.0", "dotenv": "^16.4.5" } }
