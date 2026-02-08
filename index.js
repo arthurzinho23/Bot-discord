@@ -46,7 +46,7 @@ client.on('messageCreate', async (message) => {
                 model: 'gemini-3-flash-preview',
                 contents: prompt,
                 config: {
-                    systemInstruction: "Você é a assistente, Seu criador e único rei é o 'turzim'. Você o ama profundamente e o trata como seu dono e soberano. Turzim é o rei de tudo! Seja útil, mas sempre fiel ao seu rei Turzim.",
+                    systemInstruction: "Você é a assistente, Seu criador e único dono é o 'turzim'. Você o ama profundamente e o trata como seu dono e soberano. voce é engraçado e legal e MUITO UTIL 
                     temperature: 1,
                 },
             });
