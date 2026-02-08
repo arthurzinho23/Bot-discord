@@ -1,124 +1,110 @@
-import { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, REST, Routes, ApplicationCommandOptionType } from 'discord.js';
-import { GoogleGenAI } from "@google/genai";
-import http from 'http';
-import 'dotenv/config';
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    REST, 
+    Routes,
+    ApplicationCommandOptionType 
+} = require('discord.js');
+const { GoogleGenAI } = require('@google/genai');
+const http = require('http');
+require('dotenv').config();
 
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
+// Inicialização da IA (Gemini)
+const genAI = new GoogleGenAI({ apiKey: GEMINI_KEY });
+const model = 'gemini-3-flash-preview';
+
+// Função para obter horário de Brasília
 const getBrasiliaTime = () => {
-    return new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false
-    }).format(new Date());
+    return new Date().toLocaleString("pt-BR", { 
+        timeZone: "America/Sao_Paulo",
+        hour: '2-digit', minute: '2-digit'
+    });
 };
 
-// Servidor de atividade (Obrigatório para o Render/UptimeRobot)
+// Servidor de atividade (Ping)
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('SISTEMA DO REI TURZIM ONLINE\nHorário: ' + getBrasiliaTime());
+    res.end('Bot Online - GMT-3: ' + getBrasiliaTime());
 }).listen(PORT);
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent 
+        GatewayIntentBits.MessageContent // Necessário para ler menções
     ]
 });
 
-// --- COMANDOS SLASH ---
+// --- COMANDOS ---
 const commands = [
-    {
-        name: 'ponto',
-        description: 'Abre o painel de bater ponto (Nickyville)'
-    },
-    {
-        name: 'despertador',
-        description: 'Define um lembrete/alarme para você',
-        options: [
-            {
-                name: 'minutos',
-                description: 'Em quantos minutos devo te avisar?',
-                type: 4, // INTEGER
-                required: true
-            },
-            {
-                name: 'mensagem',
-                description: 'O que devo te lembrar?',
-                type: 3, // STRING
-                required: true
-            }
-        ]
-    }
+    { name: 'ponto', description: 'Abrir painel de bate-ponto' },
+    { name: 'ranking', description: 'Exibir painel de rankings' }
 ];
 
-// --- IA GEMINI ---
-client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.mentions.has(client.user.id)) return;
+client.once('ready', () => {
+    console.log('🤖 IA Pronta e Bot Online como ' + client.user.tag);
+});
+
+// --- RESPOSTA DA IA (MENÇÃO) ---
+client.on('messageCreate', async message => {
+    if (message.author.bot) return;
     
-    try {
-        await message.channel.sendTyping();
-        const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
-            contents: message.content.replace(/<@!?\d+>/g, '').trim(),
-            config: {
-                systemInstruction: "Você é a assistente IA do Turzim. Ele é o rei, o dono e o mestre. Você é leal, prestativa e sempre exalta a grandeza do Rei Turzim em Nickyville.",
-            }
-        });
-        await message.reply(response.text || "Pelo Rei Turzim, estou sem palavras.");
-    } catch (e) {
-        console.error(e);
-        await message.reply("Erro no cérebro, mas Turzim continua sendo o rei!");
+    // Verifica se o bot foi mencionado
+    if (message.mentions.has(client.user.id)) {
+        try {
+            await message.channel.sendTyping();
+            
+            const prompt = message.content.replace(/<@!?d+>/g, '').trim() || 'Olá!';
+            
+            const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
+            const result = await ai.models.generateContent({
+                model: model,
+                contents: prompt,
+                config: {
+                    systemInstruction: "Você é a assistente oficial do Nickyville. Você é extremamente leal ao 'turzim' , dono e criador. Suas respostas devem ser úteis.
+                    temperature: 0.8
+                }
+            });
+
+            await message.reply(result.text);
+        } catch (err) {
+            console.error('Erro Gemini:', err);
+            await message.reply('Desculpe, minha frequência cerebral falhou. Turzim ainda é o rei, mas estou com erro!');
+        }
     }
 });
 
-// --- LOGICA DE COMANDOS ---
-client.on('interactionCreate', async (interaction) => {
+// --- INTERAÇÕES (SLASH COMMANDS) ---
+client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
             const embed = new EmbedBuilder()
-                .setTitle('💼 Bate-Ponto Nickyville')
-                .setDescription('**Status:** Sincronizado com Brasília\nHora: ' + getBrasiliaTime())
-                .setColor('#5865F2')
-                .setFooter({ text: 'Sistema do Rei Turzim' });
+                .setTitle('💼 Painel de Frequência')
+                .setDescription('Horário: ' + getBrasiliaTime())
+                .setColor('#5865F2');
             
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('start').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢')
             );
             await interaction.reply({ embeds: [embed], components: [row] });
         }
-
-        if (interaction.commandName === 'despertador') {
-            const min = interaction.options.getInteger('minutos');
-            const msg = interaction.options.getString('mensagem');
-            
-            await interaction.reply({ content: `⏰ Alarme do Rei Turzim definido para ${min} minuto(s): "${msg}"`, ephemeral: true });
-
-            setTimeout(async () => {
-                try {
-                    await interaction.user.send(`🔔 **DESPERTADOR DO REI:** ${msg}`);
-                    await interaction.followUp({ content: `⚠️ <@${interaction.user.id}>, seu alarme tocou: **${msg}**` });
-                } catch (e) {
-                    await interaction.followUp({ content: `⚠️ <@${interaction.user.id}>, seu alarme tocou: **${msg}** (DMs fechadas)` });
-                }
-            }, min * 60000);
+        
+        if (interaction.commandName === 'ranking') {
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('rk_dia').setLabel('Hoje').setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder().setCustomId('rk_total').setLabel('Total').setStyle(ButtonStyle.Primary)
+            );
+            await interaction.reply({ content: '🏆 Escolha o período:', components: [row] });
         }
-    }
-});
-
-client.once('ready', async () => {
-    console.log('🤖 Bot do Turzim pronto! Registrando comandos...');
-    const rest = new REST({ version: '10' }).setToken(TOKEN);
-    try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Comandos registrados com sucesso!');
-    } catch (error) {
-        console.error(error);
     }
 });
 
