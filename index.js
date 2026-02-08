@@ -16,6 +16,7 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const API_KEY = process.env.API_KEY;
+const PREFIX = '!';
 
 // Armazenamento temporário
 const sessions = new Map();
@@ -65,10 +66,26 @@ client.once('ready', async () => {
     } catch (e) { console.error(e); }
 });
 
-// Responder à menção com IA
+// Responder a Mensagens (Prefixos, Menções e IA)
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
     
+    // Comando !debug
+    if (message.content.toLowerCase() === PREFIX + 'debug') {
+        const embed = new EmbedBuilder()
+            .setTitle('🛠️ Status do Sistema - Nickyville')
+            .addFields(
+                { name: '🌐 Servidor', value: '🟢 Operacional', inline: true },
+                { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
+                { name: '📦 Versão', value: 'v1.4.0', inline: true },
+                { name: '📂 Sessões Ativas', value: `${sessions.size}`, inline: true }
+            )
+            .setColor('#DA373C')
+            .setFooter({ text: 'Sistema de Monitoramento Nickyville • Turzim' });
+        return message.reply({ embeds: [embed] });
+    }
+
+    // Responder à menção com IA
     if (message.mentions.has(client.user.id)) {
         await message.channel.sendTyping();
         const prompt = message.content.replace(/<@!?d+>/g, '').trim() || 'Olá!';
@@ -99,7 +116,8 @@ client.on('interactionCreate', async interaction => {
                 .addFields(
                     { name: '📍 /ponto', value: 'Inicia um novo registro de tempo.' },
                     { name: '🚫 /anular [ID]', value: 'Cancela um registro pelo ID (#XXXXX).' },
-                    { name: '📊 /ranking', value: 'Exibe o top 10 membros mais ativos.' }
+                    { name: '📊 /ranking', value: 'Exibe o top 10 membros mais ativos.' },
+                    { name: '🛠️ !debug', value: 'Verifica o status técnico do bot.' }
                 )
                 .setColor('#5865F2')
                 .setFooter({ text: 'Desenvolvido por Turzim' });
@@ -111,7 +129,7 @@ client.on('interactionCreate', async interaction => {
                 .setTitle('🏆 Top Frequência - Nickyville')
                 .setDescription('Ranking atualizado dos membros:')
                 .addFields(
-                    { name: '🥇 1º Turzim King', value: '➡️ **168h** (Inalcançável)', inline: false },
+                    { name: '🥇 1º Turzim King', value: '➡️ **168h** (Gênio)', inline: false },
                     { name: '🥈 2º Admin.Soberano', value: '➡️ **142h**', inline: false },
                     { name: '🥉 3º Recruta.Nick', value: '➡️ **95h**', inline: false }
                 )
@@ -126,7 +144,7 @@ client.on('interactionCreate', async interaction => {
                 sessions.delete(id);
                 return interaction.reply({ content: `✅ Registro **#${id}** anulado!`, ephemeral: true });
             }
-            return interaction.reply({ content: '❌ ID Inválido.', ephemeral: true });
+            return interaction.reply({ content: '❌ ID Inválido ou inexistente.', ephemeral: true });
         }
 
         if (commandName === 'ponto') {
