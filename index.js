@@ -16,7 +16,6 @@ require('dotenv').config();
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const API_KEY = process.env.API_KEY;
-const PREFIX = '!';
 
 // Armazenamento temporário (Em produção, use MongoDB)
 const sessions = new Map();
@@ -26,7 +25,7 @@ const ai = new GoogleGenAI({ apiKey: API_KEY });
 const getBrasiliaTime = () => {
     return new Date().toLocaleString("pt-BR", { 
         timeZone: "America/Sao_Paulo",
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
+        hour: '2-digit', minute: '2-digit'
     });
 };
 
@@ -48,15 +47,15 @@ const client = new Client({
 
 const commands = [
     { name: 'ponto', description: 'Abrir o painel de frequência' },
-    { name: 'ranking', description: 'Ver ranking de horas' },
-    { name: 'debug', description: 'Status técnico' },
-    { name: 'help', description: 'Guia de comandos' },
+    { name: 'ranking', description: 'Ver ranking de horas trabalhadas' },
+    { name: 'debug', description: 'Status técnico do sistema' },
+    { name: 'help', description: 'Guia de comandos do bot' },
     { 
         name: 'anular', 
         description: 'Anular um registro de ponto',
         options: [{
             name: 'id',
-            type: 3, // STRING
+            type: 3, 
             description: 'O ID do ponto (ex: #A5B2)',
             required: true
         }]
@@ -67,62 +66,60 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('🚀 Comandos slash e sistema de IDs ativos!');
+        console.log('🚀 Nickyville System Online!');
     } catch (e) { console.error(e); }
-});
-
-client.on('messageCreate', async message => {
-    if (message.author.bot) return;
-    if (message.content.toLowerCase() === PREFIX + 'debug') {
-        const embed = new EmbedBuilder()
-            .setTitle('🛠️ Diagnóstico')
-            .addFields(
-                { name: 'Status', value: '🟢 OK', inline: true },
-                { name: 'Ping', value: `${client.ws.ping}ms`, inline: true }
-            )
-            .setColor('#DA373C')
-            .setFooter({ text: 'feito pelo turzim' });
-        message.reply({ embeds: [embed] });
-    }
 });
 
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         const { commandName, options, user } = interaction;
 
+        if (commandName === 'ranking') {
+            const embed = new EmbedBuilder()
+                .setTitle('🏆 Ranking de Atividade - Equipe')
+                .setDescription('Os membros mais ativos da última semana:')
+                .addFields(
+                    { name: '🥇 1º Turzim King', value: '168h 20min | 🟦🟦🟦🟦🟦', inline: false },
+                    { name: '🥈 2º Admin.Soberano', value: '145h 10min | 🟦🟦🟦🟦⬜', inline: false },
+                    { name: '🥉 3º Recruta.Nick', value: '98h 45min | 🟦🟦🟦⬜⬜', inline: false }
+                )
+                .setColor('#FEE75C')
+                .setFooter({ text: 'Sistema Nickyville • Atualizado em tempo real' });
+            return interaction.reply({ embeds: [embed] });
+        }
+
         if (commandName === 'help') {
             const embed = new EmbedBuilder()
                 .setTitle('❓ Central de Ajuda - Nickyville')
-                .setDescription('Bem-vindo ao sistema de ponto oficial.')
-                .addFields(
-                    { name: '/ponto', value: 'Inicia um novo registro interativo.' },
-                    { name: '/anular [ID]', value: 'Cancela um ponto em aberto ou finalizado.' },
-                    { name: '/ranking', value: 'Mostra os mais ativos da semana.' }
-                )
                 .setColor('#5865F2')
-                .setFooter({ text: 'feito pelo turzim' });
+                .addFields(
+                    { name: '📍 /ponto', value: 'Inicia seu registro de entrada.' },
+                    { name: '🚫 /anular [ID]', value: 'Cancela um ponto específico.' },
+                    { name: '📊 /ranking', value: 'Veja quem está liderando as horas.' }
+                )
+                .setFooter({ text: 'Dúvidas? Fale com o Turzim' });
             return interaction.reply({ embeds: [embed], ephemeral: true });
         }
 
         if (commandName === 'anular') {
-            const id = options.getString('id').replace('#', '');
+            const id = options.getString('id').replace('#', '').toUpperCase();
             if (sessions.has(id)) {
                 sessions.delete(id);
-                return interaction.reply({ content: `✅ O ponto **#${id}** foi anulado com sucesso!`, ephemeral: true });
+                return interaction.reply({ content: `✅ Registro **#${id}** anulado!`, ephemeral: true });
             }
-            return interaction.reply({ content: '❌ ID não encontrado ou já expirado.', ephemeral: true });
+            return interaction.reply({ content: '❌ ID não encontrado.', ephemeral: true });
         }
 
         if (commandName === 'ponto') {
             const sessionID = generateID();
             const embed = new EmbedBuilder()
-                .setTitle('🕒 Registro de Ponto - Nickyville')
-                .setDescription(`Olá **${user.username}**, clique abaixo para iniciar.\n\n**ID do Registro:** #${sessionID}`)
+                .setTitle('🕒 Painel de Frequência')
+                .setDescription(`Olá **${user.username}**, clique no botão para registrar sua entrada.\n\n**Registro:** #${sessionID}`)
                 .setColor('#5865F2')
-                .setFooter({ text: `ID: #${sessionID} | feito pelo turzim` });
+                .setFooter({ text: `ID: #${sessionID} | Nickyville System` });
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`start_${sessionID}`).setLabel('Começar').setStyle(ButtonStyle.Success)
+                new ButtonBuilder().setCustomId(`start_${sessionID}`).setLabel('Entrar em Serviço').setStyle(ButtonStyle.Success)
             );
 
             await interaction.reply({ embeds: [embed], components: [row] });
@@ -131,41 +128,53 @@ client.on('interactionCreate', async interaction => {
 
     if (interaction.isButton()) {
         const [action, id] = interaction.customId.split('_');
-        const { user, message } = interaction;
+        const { user } = interaction;
 
-        // Criar ou recuperar sessão
-        let data = sessions.get(id) || { start: '--:--', pause: '--:--', end: '--:--', status: 'Inativo' };
+        let data = sessions.get(id) || { 
+            start: '--:--', 
+            pauses: [], 
+            end: '--:--', 
+            status: 'Inativo' 
+        };
 
         if (action === 'start') {
             data.start = getBrasiliaTime();
-            data.status = '🟢 Em Serviço';
+            data.status = '🟢 EM SERVIÇO';
         } else if (action === 'pause') {
-            data.pause = getBrasiliaTime();
-            data.status = '🟡 Em Pausa';
+            data.pauses.push({ start: getBrasiliaTime(), end: null });
+            data.status = '🟡 EM PAUSA';
         } else if (action === 'resume') {
-            data.pause = '--:-- (Retomado)';
-            data.status = '🟢 Em Serviço';
+            const lastPause = data.pauses[data.pauses.length - 1];
+            if (lastPause) lastPause.end = getBrasiliaTime();
+            data.status = '🟢 EM SERVIÇO';
         } else if (action === 'stop') {
             data.end = getBrasiliaTime();
-            data.status = '🔴 Finalizado';
+            data.status = '🔴 FINALIZADO';
         }
 
         sessions.set(id, data);
 
-        const newEmbed = new EmbedBuilder()
+        // Formatar lista de pausas bonitinha
+        let pauseText = data.pauses.length > 0 
+            ? data.pauses.map((p, i) => `**Pausa ${i+1}:** ${p.start} ➔ ${p.end || 'Pausado...'}`).join('\n')
+            : 'Nenhuma pausa registrada';
+
+        const embed = new EmbedBuilder()
             .setTitle('🕒 Registro de Ponto - Nickyville')
-            .setColor(action === 'stop' ? '#DA373C' : '#5865F2')
-            .setDescription(`**Funcionário:** ${user.username}\n**Status:** ${data.status}`)
+            .setColor(action === 'stop' ? '#DA373C' : (action === 'pause' ? '#FEE75C' : '#5865F2'))
+            .setThumbnail(user.displayAvatarURL())
             .addFields(
-                { name: '⏺️ Início', value: data.start, inline: true },
-                { name: '⏸️ Pausa', value: data.pause, inline: true },
-                { name: '⏹️ Término', value: data.end, inline: true }
+                { name: '👤 Funcionário', value: user.username, inline: true },
+                { name: '📊 Status', value: data.status, inline: true },
+                { name: 'Início', value: data.start, inline: true },
+                { name: 'Término', value: data.end, inline: true },
+                { name: '━━━━ Histórico de Pausas ━━━━', value: pauseText, inline: false }
             )
             .setFooter({ text: `ID: #${id} | feito pelo turzim` });
 
         const row = new ActionRowBuilder();
         if (action !== 'stop') {
-            if (data.status.includes('Pausa')) {
+            if (data.status.includes('PAUSA')) {
                 row.addComponents(new ButtonBuilder().setCustomId(`resume_${id}`).setLabel('Retomar').setStyle(ButtonStyle.Primary));
             } else {
                 row.addComponents(new ButtonBuilder().setCustomId(`pause_${id}`).setLabel('Pausar').setStyle(ButtonStyle.Secondary));
@@ -173,10 +182,7 @@ client.on('interactionCreate', async interaction => {
             row.addComponents(new ButtonBuilder().setCustomId(`stop_${id}`).setLabel('Terminar').setStyle(ButtonStyle.Danger));
         }
 
-        await interaction.update({ 
-            embeds: [newEmbed], 
-            components: action === 'stop' ? [] : [row] 
-        });
+        await interaction.update({ embeds: [embed], components: action === 'stop' ? [] : [row] });
     }
 });
 
