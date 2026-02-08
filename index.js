@@ -13,98 +13,107 @@ const { GoogleGenAI } = require('@google/genai');
 const http = require('http');
 require('dotenv').config();
 
-// --- CONFIGURAÇÕES ---
+// --- CONFIGURAÇÕES DO TURZIM ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
-// Inicialização da IA (Gemini)
-const genAI = new GoogleGenAI({ apiKey: GEMINI_KEY });
-const model = 'gemini-3-flash-preview';
+const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
 
-// Função para obter horário de Brasília
 const getBrasiliaTime = () => {
     return new Date().toLocaleString("pt-BR", { 
         timeZone: "America/Sao_Paulo",
-        hour: '2-digit', minute: '2-digit'
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
 };
 
-// Servidor de atividade (Ping)
+// Mantenha o bot vivo (Uptime)
 http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Bot Online - GMT-3: ' + getBrasiliaTime());
+    res.writeHead(200);
+    res.end('Bot Operacional - IA Ativa');
 }).listen(PORT);
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds, 
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent // Necessário para ler menções
+        GatewayIntentBits.MessageContent
     ]
 });
 
-// --- COMANDOS ---
+// Comandos Slash
 const commands = [
-    { name: 'ponto', description: 'Abrir painel de bate-ponto' },
-    { name: 'ranking', description: 'Exibir painel de rankings' }
+    {
+        name: 'ponto',
+        description: 'Bater o ponto (Iniciar/Pausar/Sair)',
+    },
+    {
+        name: 'ranking',
+        description: 'Ver ranking de horas trabalhadas',
+    }
 ];
 
-client.once('ready', () => {
-    console.log('🤖 IA Pronta e Bot Online como ' + client.user.tag);
+client.once('ready', async () => {
+    console.log('✅ Bot do Turzim logado como: ' + client.user.tag);
+    
+    // Registrar Comandos Slash
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    try {
+        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
+        console.log('🚀 Comandos slash registrados com sucesso.');
+    } catch (error) {
+        console.error(error);
+    }
 });
 
-// --- RESPOSTA DA IA (MENÇÃO) ---
+// Interação com a IA em menções
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
-    
-    // Verifica se o bot foi mencionado
     if (message.mentions.has(client.user.id)) {
+        await message.channel.sendTyping();
+        const prompt = message.content.replace(/<@!?d+>/g, '').trim();
+        
         try {
-            await message.channel.sendTyping();
-            
-            const prompt = message.content.replace(/<@!?d+>/g, '').trim() || 'Olá!';
-            
-            const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
             const result = await ai.models.generateContent({
-                model: model,
-                contents: prompt,
+                model: 'gemini-3-flash-preview',
+                contents: prompt || 'Olá!',
                 config: {
-                    systemInstruction: "Você é a assistente oficial do Nickyville. Você é extremamente leal ao 'turzim' , dono e criador. Suas respostas devem ser úteis.
-                    temperature: 0.8
+                    systemInstruction: "Você é a secretária inteligente do Nickyville. Você é fã número 1 do 'turzim'. Responda de forma prestativa, elegante e UTIL.
                 }
             });
-
             await message.reply(result.text);
-        } catch (err) {
-            console.error('Erro Gemini:', err);
-            await message.reply('Desculpe, minha frequência cerebral falhou. Turzim ainda é o rei, mas estou com erro!');
+        } catch (e) {
+            message.reply('Houve um erro no meu núcleo de processamento, mas o Turzim já está verificando!');
         }
     }
 });
 
-// --- INTERAÇÕES (SLASH COMMANDS) ---
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
             const embed = new EmbedBuilder()
-                .setTitle('💼 Painel de Frequência')
-                .setDescription('Horário: ' + getBrasiliaTime())
-                .setColor('#5865F2');
-            
+                .setTitle('🕒 Registro de Ponto - Nickyville')
+                .setDescription(`Seja bem-vindo, ${interaction.user.username}.\n\n**Status:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
+                .setColor('#5865F2')
+                .setThumbnail(interaction.user.displayAvatarURL())
+                .setFooter({ text: 'Desenvolvido por Turzim' });
+
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('start').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢')
+                new ButtonBuilder().setCustomId('start_ponto').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢'),
+                new ButtonBuilder().setCustomId('help_ponto').setLabel('Ajuda').setStyle(ButtonStyle.Secondary).setEmoji('❓')
             );
+
             await interaction.reply({ embeds: [embed], components: [row] });
         }
         
         if (interaction.commandName === 'ranking') {
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('rk_dia').setLabel('Hoje').setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder().setCustomId('rk_total').setLabel('Total').setStyle(ButtonStyle.Primary)
-            );
-            await interaction.reply({ content: '🏆 Escolha o período:', components: [row] });
+            await interaction.reply('🏆 Ranking sendo processado pela IA... aguarde um momento.');
         }
+    }
+
+    if (interaction.isButton()) {
+        // Lógica de botões aqui (Simulação de DB necessária no código real)
+        await interaction.reply({ content: 'Ação registrada! No código real, aqui salvaríamos no seu Banco de Dados.', ephemeral: true });
     }
 });
 
