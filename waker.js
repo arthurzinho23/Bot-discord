@@ -1,18 +1,33 @@
-const https = require('https');
+// --- WAKER.JS: MANTENHA O BOT ACORDADO ---
+// Este script é essencial para plataformas como Render, Replit ou Glitch.
+// Ele faz um "ping" no servidor HTTP do bot a cada 5 minutos para impedir que ele entre em suspensão.
 
-// URL da sua aplicação (Ex: https://seu-bot.onrender.com)
-const URL = process.env.APP_URL || 'https://substitua-pela-sua-url-aqui.com';
+import https from 'https';
+import http from 'http';
+import 'dotenv/config';
 
-console.log('⏰ Despertador do Bot iniciado!');
+// Tenta pegar a URL externa (Render/Heroku) ou usa localhost
+const URL = process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000';
 
-// Função que pinga o servidor a cada 5 minutos
-setInterval(() => {
-    https.get(URL, (res) => {
-        console.log('💤 Ping enviado para evitar hibernação. Status:', res.statusCode);
-    }).on('error', (err) => {
-        console.error('❌ Erro no Despertador:', err.message);
+console.log(`⏰ Waker iniciado! Vou manter o bot acordado pingando: ${URL}`);
+
+const ping = () => {
+    const protocol = URL.startsWith('https') ? https : http;
+    
+    const req = protocol.get(URL, (res) => {
+        console.log(`[PING] ${new Date().toLocaleTimeString('pt-BR')} - Status: ${res.statusCode} - Bot Acordado!`);
     });
-}, 300000); // 300.000ms = 5 minutos
 
-// Mantém o processo vivo
-setInterval(() => {}, 1000);
+    req.on('error', (err) => {
+        console.error(`[ERRO] Falha ao acordar o bot: ${err.message}`);
+    });
+    
+    req.end();
+};
+
+// Ping imediato ao iniciar
+ping();
+
+// Repetir a cada 5 minutos (300.000ms)
+// A maioria dos free tiers dorme após 15min de inatividade.
+setInterval(ping, 300000);
