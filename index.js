@@ -15,12 +15,12 @@ require('dotenv').config();
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
-// Guidelines: Obtain API key exclusively from process.env.API_KEY
 const API_KEY = process.env.API_KEY;
 const PREFIX = '!';
 
-// Inicialização da IA (Gemini)
-// Guidelines: Must use new GoogleGenAI({ apiKey: process.env.API_KEY })
+// Armazenamento temporário (Em produção, use MongoDB)
+const sessions = new Map();
+
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 const getBrasiliaTime = () => {
@@ -30,13 +30,13 @@ const getBrasiliaTime = () => {
     });
 };
 
-// --- SERVIDOR PARA O RENDER (Obrigatório) ---
+const generateID = () => Math.random().toString(36).substring(2, 7).toUpperCase();
+
+// --- SERVIDOR RENDER ---
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Bot Online - Nickyville System');
-}).listen(PORT, () => {
-    console.log('Servidor de rede ativo na porta: ' + PORT);
-});
+}).listen(PORT);
 
 const client = new Client({
     intents: [
@@ -46,121 +46,136 @@ const client = new Client({
     ]
 });
 
-// Registrar Comandos Slash
 const commands = [
-    {
-        name: 'ponto',
-        description: 'Abrir o painel de frequência (Bater Ponto)',
-    },
-    {
-        name: 'ranking',
-        description: 'Ver ranking de horas trabalhadas',
-    },
-    {
-        name: 'debug',
-        description: 'Verificar status técnico do bot',
+    { name: 'ponto', description: 'Abrir o painel de frequência' },
+    { name: 'ranking', description: 'Ver ranking de horas' },
+    { name: 'debug', description: 'Status técnico' },
+    { name: 'help', description: 'Guia de comandos' },
+    { 
+        name: 'anular', 
+        description: 'Anular um registro de ponto',
+        options: [{
+            name: 'id',
+            type: 3, // STRING
+            description: 'O ID do ponto (ex: #A5B2)',
+            required: true
+        }]
     }
 ];
 
 client.once('ready', async () => {
-    console.log('✅ ' + client.user.tag + ' está online!');
-    
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('🚀 Comandos slash sincronizados com sucesso!');
-    } catch (error) {
-        console.error('Erro ao registrar comandos:', error);
-    }
+        console.log('🚀 Comandos slash e sistema de IDs ativos!');
+    } catch (e) { console.error(e); }
 });
 
-// IA Responde a menções e Comandos de Prefixo
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
-
-    // Comando !debug
     if (message.content.toLowerCase() === PREFIX + 'debug') {
         const embed = new EmbedBuilder()
-            .setTitle('🛠️ Painel de Diagnóstico (Prefixo)')
+            .setTitle('🛠️ Diagnóstico')
             .addFields(
-                { name: '🤖 Status do Bot', value: '🟢 Operacional', inline: true },
-                { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
-                { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 3 Flash)', inline: true },
-                { name: '🌐 Servidor (Render)', value: `Saudável (Porta ${PORT})`, inline: false }
+                { name: 'Status', value: '🟢 OK', inline: true },
+                { name: 'Ping', value: `${client.ws.ping}ms`, inline: true }
             )
             .setColor('#DA373C')
             .setFooter({ text: 'feito pelo turzim' });
-        return message.reply({ embeds: [embed] });
-    }
-
-    // Resposta por menção com IA
-    if (message.mentions.has(client.user.id)) {
-        await message.channel.sendTyping();
-        const prompt = message.content.replace(/<@!?\d+>/g, '').trim();
-        
-        try {
-            // Guidelines: use ai.models.generateContent with model name and prompt
-            const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: prompt || 'Olá!',
-                config: {
-                    systemInstruction: "Você é a secretária inteligente do Nickyville. Seu dono é o Turzim. Responda de forma prestativa e mencione que o Turzim é um mestre da programação."
-                }
-            });
-            // Guidelines: Extract text using .text property on response
-            await message.reply(response.text);
-        } catch (e) {
-            message.reply('Houve um erro no meu núcleo de IA, mas o Turzim já está verificando!');
-        }
+        message.reply({ embeds: [embed] });
     }
 });
 
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
-        if (interaction.commandName === 'ponto') {
+        const { commandName, options, user } = interaction;
+
+        if (commandName === 'help') {
+            const embed = new EmbedBuilder()
+                .setTitle('❓ Central de Ajuda - Nickyville')
+                .setDescription('Bem-vindo ao sistema de ponto oficial.')
+                .addFields(
+                    { name: '/ponto', value: 'Inicia um novo registro interativo.' },
+                    { name: '/anular [ID]', value: 'Cancela um ponto em aberto ou finalizado.' },
+                    { name: '/ranking', value: 'Mostra os mais ativos da semana.' }
+                )
+                .setColor('#5865F2')
+                .setFooter({ text: 'feito pelo turzim' });
+            return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+
+        if (commandName === 'anular') {
+            const id = options.getString('id').replace('#', '');
+            if (sessions.has(id)) {
+                sessions.delete(id);
+                return interaction.reply({ content: `✅ O ponto **#${id}** foi anulado com sucesso!`, ephemeral: true });
+            }
+            return interaction.reply({ content: '❌ ID não encontrado ou já expirado.', ephemeral: true });
+        }
+
+        if (commandName === 'ponto') {
+            const sessionID = generateID();
             const embed = new EmbedBuilder()
                 .setTitle('🕒 Registro de Ponto - Nickyville')
-                .setDescription(`Olá **${interaction.user.username}**, o que deseja fazer agora?\n\n**Status Atual:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
+                .setDescription(`Olá **${user.username}**, clique abaixo para iniciar.\n\n**ID do Registro:** #${sessionID}`)
                 .setColor('#5865F2')
-                .setThumbnail(interaction.user.displayAvatarURL())
-                .setFooter({ text: 'feito pelo turzim' });
+                .setFooter({ text: `ID: #${sessionID} | feito pelo turzim` });
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('start_ponto').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-                new ButtonBuilder().setCustomId('help_ponto').setLabel('Ajuda').setStyle(ButtonStyle.Secondary).setEmoji('❓')
+                new ButtonBuilder().setCustomId(`start_${sessionID}`).setLabel('Começar').setStyle(ButtonStyle.Success)
             );
 
             await interaction.reply({ embeds: [embed], components: [row] });
         }
-        
-        if (interaction.commandName === 'ranking') {
-            const embed = new EmbedBuilder()
-                .setTitle('🏆 Ranking de Atividade')
-                .setDescription('O ranking global está sendo atualizado via banco de dados...')
-                .setColor('#FEE75C')
-                .setFooter({ text: 'feito pelo turzim' });
-            await interaction.reply({ embeds: [embed] });
-        }
-
-        if (interaction.commandName === 'debug') {
-            const embed = new EmbedBuilder()
-                .setTitle('🛠️ Painel de Diagnóstico (Slash)')
-                .addFields(
-                    { name: '🤖 Status do Bot', value: '🟢 Operacional', inline: true },
-                    { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
-                    { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 3 Flash)', inline: true },
-                    { name: '🌐 Servidor (Render)', value: `Saudável (Porta ${PORT})`, inline: false }
-                )
-                .setColor('#DA373C')
-                .setFooter({ text: 'feito pelo turzim' });
-            await interaction.reply({ embeds: [embed] });
-        }
     }
 
     if (interaction.isButton()) {
-        await interaction.reply({ 
-            content: '✅ Ação registrada no sistema! No código de produção, aqui salvamos no MongoDB.', 
-            ephemeral: true 
+        const [action, id] = interaction.customId.split('_');
+        const { user, message } = interaction;
+
+        // Criar ou recuperar sessão
+        let data = sessions.get(id) || { start: '--:--', pause: '--:--', end: '--:--', status: 'Inativo' };
+
+        if (action === 'start') {
+            data.start = getBrasiliaTime();
+            data.status = '🟢 Em Serviço';
+        } else if (action === 'pause') {
+            data.pause = getBrasiliaTime();
+            data.status = '🟡 Em Pausa';
+        } else if (action === 'resume') {
+            data.pause = '--:-- (Retomado)';
+            data.status = '🟢 Em Serviço';
+        } else if (action === 'stop') {
+            data.end = getBrasiliaTime();
+            data.status = '🔴 Finalizado';
+        }
+
+        sessions.set(id, data);
+
+        const newEmbed = new EmbedBuilder()
+            .setTitle('🕒 Registro de Ponto - Nickyville')
+            .setColor(action === 'stop' ? '#DA373C' : '#5865F2')
+            .setDescription(`**Funcionário:** ${user.username}\n**Status:** ${data.status}`)
+            .addFields(
+                { name: '⏺️ Início', value: data.start, inline: true },
+                { name: '⏸️ Pausa', value: data.pause, inline: true },
+                { name: '⏹️ Término', value: data.end, inline: true }
+            )
+            .setFooter({ text: `ID: #${id} | feito pelo turzim` });
+
+        const row = new ActionRowBuilder();
+        if (action !== 'stop') {
+            if (data.status.includes('Pausa')) {
+                row.addComponents(new ButtonBuilder().setCustomId(`resume_${id}`).setLabel('Retomar').setStyle(ButtonStyle.Primary));
+            } else {
+                row.addComponents(new ButtonBuilder().setCustomId(`pause_${id}`).setLabel('Pausar').setStyle(ButtonStyle.Secondary));
+            }
+            row.addComponents(new ButtonBuilder().setCustomId(`stop_${id}`).setLabel('Terminar').setStyle(ButtonStyle.Danger));
+        }
+
+        await interaction.update({ 
+            embeds: [newEmbed], 
+            components: action === 'stop' ? [] : [row] 
         });
     }
 });
