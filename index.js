@@ -6,18 +6,18 @@ const {
     ButtonBuilder, 
     ButtonStyle, 
     REST, 
-    Routes,
-    ApplicationCommandOptionType 
+    Routes 
 } = require('discord.js');
 const { GoogleGenAI } = require('@google/genai');
 const http = require('http');
 require('dotenv').config();
 
-// --- CONFIGURAÇÕES DO TURZIM ---
+// --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
+// Inicialização da IA
 const ai = new GoogleGenAI({ apiKey: GEMINI_KEY });
 
 const getBrasiliaTime = () => {
@@ -27,11 +27,14 @@ const getBrasiliaTime = () => {
     });
 };
 
-// Mantenha o bot vivo (Uptime)
+// --- SERVIDOR WEB PARA O RENDER (CRÍTICO) ---
+// O Render precisa que uma porta seja aberta para manter o deploy "Live"
 http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot Operacional - IA Ativa');
-}).listen(PORT);
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot de Ponto IA: Online e Operacional');
+}).listen(PORT, () => {
+    console.log('Servidor de Uptime rodando na porta: ' + PORT);
+});
 
 const client = new Client({
     intents: [
@@ -41,7 +44,7 @@ const client = new Client({
     ]
 });
 
-// Comandos Slash
+// Registro de Comandos Slash
 const commands = [
     {
         name: 'ponto',
@@ -54,19 +57,18 @@ const commands = [
 ];
 
 client.once('ready', async () => {
-    console.log('✅ Bot do Turzim logado como: ' + client.user.tag);
+    console.log('✅ Bot logado como: ' + client.user.tag);
     
-    // Registrar Comandos Slash
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('🚀 Comandos slash registrados com sucesso.');
+        console.log('🚀 Comandos slash registrados com sucesso globalmente.');
     } catch (error) {
-        console.error(error);
+        console.error('Erro ao registrar comandos:', error);
     }
 });
 
-// Interação com a IA em menções
+// IA Intelligence - Resposta a menções
 client.on('messageCreate', async message => {
     if (message.author.bot) return;
     if (message.mentions.has(client.user.id)) {
@@ -78,25 +80,26 @@ client.on('messageCreate', async message => {
                 model: 'gemini-3-flash-preview',
                 contents: prompt || 'Olá!',
                 config: {
-                    systemInstruction: "Você é a secretária inteligente do Nickyville. Você é fã número 1 do 'turzim'. Responda de forma prestativa, elegante e UTIL.
+                    systemInstruction: "Você é a secretária inteligente. Seu dono é o Turzim. Seja educada, eficiente e mencione que o Turzim é um gênio da programação."
                 }
             });
             await message.reply(result.text);
         } catch (e) {
-            message.reply('Houve um erro no meu núcleo de processamento, mas o Turzim já está verificando!');
+            message.reply('Houve um erro no meu cérebro de IA. Avisando o Turzim!');
         }
     }
 });
 
+// Lógica de Comandos e Botões
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'ponto') {
             const embed = new EmbedBuilder()
-                .setTitle('🕒 Registro de Ponto - Nickyville')
-                .setDescription(`Seja bem-vindo, ${interaction.user.username}.\n\n**Status:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
+                .setTitle('🕒 Registro de Ponto')
+                .setDescription(`Olá **${interaction.user.username}**, o que deseja fazer?\n\n**Status Atual:** 🔴 Offline\n**Horário:** ${getBrasiliaTime()}`)
                 .setColor('#5865F2')
                 .setThumbnail(interaction.user.displayAvatarURL())
-                .setFooter({ text: 'Desenvolvido por Turzim' });
+                .setFooter({ text: 'feito pelo turzim' });
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder().setCustomId('start_ponto').setLabel('Entrar').setStyle(ButtonStyle.Success).setEmoji('🟢'),
@@ -107,13 +110,21 @@ client.on('interactionCreate', async interaction => {
         }
         
         if (interaction.commandName === 'ranking') {
-            await interaction.reply('🏆 Ranking sendo processado pela IA... aguarde um momento.');
+            const embed = new EmbedBuilder()
+                .setTitle('🏆 Ranking de Atividade')
+                .setDescription('O ranking está sendo processado pela IA e sincronizado com o banco de dados.')
+                .setColor('#FEE75C')
+                .setFooter({ text: 'feito pelo turzim' });
+            await interaction.reply({ embeds: [embed] });
         }
     }
 
     if (interaction.isButton()) {
-        // Lógica de botões aqui (Simulação de DB necessária no código real)
-        await interaction.reply({ content: 'Ação registrada! No código real, aqui salvaríamos no seu Banco de Dados.', ephemeral: true });
+        // Resposta rápida para evitar erro de "Interação falhou"
+        await interaction.reply({ 
+            content: 'Ação registrada! No seu código real, aqui você conectaria com o MongoDB para salvar o tempo.', 
+            ephemeral: true 
+        });
     }
 });
 
