@@ -1,14 +1,8 @@
 {
-  "name": "bot-ponto-nickyville",
-  "version": "1.0.0",
-  "description": "Bot de ponto inteligente do Turzim",
+  "name": "multi-ponto-bot",
+  "version": "2.0.0",
+  "description": "Bot de Ponto Multi-Serviços - Feito pelo turzim",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "@google/genai": "^1.40.0",
-    "dotenv": "^16.4.5"
-  }
+  "scripts": { "start": "node index.js" },
+  "dependencies": { "discord.js": "^14.14.1", "dotenv": "^16.4.5" }
 }
