@@ -1,12 +1,10 @@
 {
-  "name": "bot-ponto-ia-turzim",
-  "version": "4.0.0",
-  "type": "module",
+  "name": "bot-ponto-ia",
+  "version": "3.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "waker": "node waker.js",
-    "all": "node index.js & node waker.js"
+    "waker": "node waker.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
