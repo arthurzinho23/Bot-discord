@@ -67,7 +67,7 @@ client.on('messageCreate', async (message) => {
             model: 'gemini-3-flash-preview',
             contents: message.content.replace(/<@!?\d+>/g, '').trim(),
             config: {
-                systemInstruction: "Você é a assistente IA do Turzim. Ele é o rei, o dono e o mestre. Você é leal, prestativa e sempre exalta a grandeza do Rei Turzim em Nickyville.",
+                systemInstruction: "Você é a assistente IA de Nickyville sua funçao é ajudar mais voce é grosso grosso e mais presta pra alguma coisa",
             }
         });
         await message.reply(response.text || "Pelo Rei Turzim, estou sem palavras.");
