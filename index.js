@@ -11,7 +11,6 @@ import {
     Routes,
     PermissionFlagsBits 
 } from 'discord.js';
-import { GoogleGenAI } from "@google/genai";
 import http from 'http';
 import 'dotenv/config';
 import './waker.js'; // 🔥 Mantém o bot acordado
@@ -19,18 +18,12 @@ import './waker.js'; // 🔥 Mantém o bot acordado
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
-const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
-// Em um bot real hospedado profissionalmente, usaríamos um banco de dados (MongoDB/SQLite).
-// Como é para rodar em containers simples, usamos Map em memória.
-// ATENÇÃO: Se o bot reiniciar, as sessões ativas resetam, mas o Ranking persiste enquanto o processo node rodar.
-
-const sessions = new Map(); // id -> { userId, startTime, pauses: [], logs: [] }
+const sessions = new Map(); // id -> { userId, username, startTime, pauses: [], logs: [] }
 const userStats = new Map(); // userId -> { username, totalMs, weeklyMs, dailyMs }
 
-// Variáveis de controle de tempo para resetar rankings
 let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
 // --- SERVIDOR KEEP-ALIVE ---
@@ -61,7 +54,6 @@ const generateProgressBar = (current, max) => {
 
 const generateID = () => Math.random().toString(36).substring(2, 7).toUpperCase();
 
-// Função para checar virada de dia (Reseta Ranking Diário)
 const checkDailyReset = () => {
     const currentDay = getDateStr();
     if (currentDay !== lastDayCheck) {
@@ -79,7 +71,7 @@ const client = new Client({
 const commands = [
     { name: 'ponto', description: 'Abrir painel de registro de ponto' },
     { name: 'ranking', description: 'Ver ranking de horas (Diário/Semanal/Geral)' },
-    { name: 'help', description: 'Lista de comandos' },
+    { name: 'help', description: 'Ver todos os comandos disponíveis' },
     { 
         name: 'anular', 
         description: '[ADMIN] Cancela um ponto específico',
@@ -93,16 +85,16 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('✅ Comandos registrados!');
+        console.log('✅ Comandos registrados com sucesso!');
     } catch (e) { console.error(e); }
 });
 
-// --- EVENTOS E COMANDOS ---
+// --- EVENTOS E INTERAÇÕES ---
 client.on('interactionCreate', async interaction => {
     try {
-        checkDailyReset(); // Verifica se precisa resetar o dia a cada interação
+        checkDailyReset();
 
-        // 1. COMANDOS CHAT
+        // 1. COMANDOS DE CHAT
         if (interaction.isChatInputCommand()) {
             const { commandName, options, user } = interaction;
 
@@ -123,7 +115,7 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
-                // Cria uma entrada vazia temporária para garantir que o ID exista se o usuário clicar rápido
+                // Registra sessão inicial vinculada ao ID do usuário que chamou o comando
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
@@ -167,7 +159,18 @@ client.on('interactionCreate', async interaction => {
             }
             
             if (commandName === 'help') {
-                interaction.reply({ content: 'Use /ponto para trabalhar e /ranking para ver os tops.', ephemeral: true });
+                const embed = new EmbedBuilder()
+                    .setTitle('📘 Ajuda - Nickyville Ponto')
+                    .setColor('#00A8FC')
+                    .addFields(
+                        { name: '/ponto', value: 'Abre seu cartão de ponto pessoal.', inline: true },
+                        { name: '/ranking', value: 'Vê quem trabalhou mais.', inline: true },
+                        { name: '/anular', value: '(Admin) Cancela um ponto bugado.', inline: true },
+                        { name: '!debug', value: '(Admin) Informações técnicas.', inline: true }
+                    )
+                    .setFooter({ text: 'Sistema Operacional v7.1' });
+                
+                await interaction.reply({ embeds: [embed], ephemeral: true });
             }
         }
 
@@ -175,19 +178,18 @@ client.on('interactionCreate', async interaction => {
         if (interaction.isStringSelectMenu() && interaction.customId === 'ranking_filter') {
             const filter = interaction.values[0];
             
-            // Converte Map para Array e Ordena
             const sorted = Array.from(userStats.entries())
                 .map(([id, stats]) => ({ ...stats, id }))
                 .filter(s => {
                     const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
-                    return val > 0; // Remove quem tem 0
+                    return val > 0;
                 })
                 .sort((a, b) => {
                     const valA = filter === 'daily' ? a.dailyMs : (filter === 'weekly' ? a.weeklyMs : a.totalMs);
                     const valB = filter === 'daily' ? b.dailyMs : (filter === 'weekly' ? b.weeklyMs : b.totalMs);
                     return valB - valA;
                 })
-                .slice(0, 10); // Top 10
+                .slice(0, 10);
 
             const titles = { total: '🏆 Ranking Geral', weekly: '📅 Ranking Semanal', daily: '☀️ Ranking Diário' };
             const maxVal = sorted.length > 0 ? (filter === 'daily' ? sorted[0].dailyMs : (filter === 'weekly' ? sorted[0].weeklyMs : sorted[0].totalMs)) : 1;
@@ -214,19 +216,19 @@ client.on('interactionCreate', async interaction => {
             await interaction.update({ embeds: [embed] });
         }
 
-        // 3. BOTÕES
+        // 3. BOTÕES (LÓGICA PRINCIPAL)
         if (interaction.isButton()) {
             const [action, id] = interaction.customId.split('_');
             const user = interaction.user;
             const now = Date.now();
             const timeStr = getBrasiliaTime();
             
-            // Tenta recuperar sessão ou cria nova (fallback de segurança)
             let session = sessions.get(id);
             
-            // Se o botão for "Start" e a sessão não existir (por restart do bot), criamos agora
+            // Tratamento de sessão inexistente (bot reiniciou ou id errado)
             if (!session) {
                 if (action === 'start') {
+                    // Recria sessão para o usuário atual se for Start
                     session = { 
                         userId: user.id, 
                         username: user.username, 
@@ -236,9 +238,20 @@ client.on('interactionCreate', async interaction => {
                         startTime: 0 
                     };
                 } else {
-                    // Se tentar pausar/parar uma sessão que não existe mais na memória
-                    return interaction.reply({ content: '⚠️ Esta sessão expirou ou o bot reiniciou. Por favor, use `/ponto` novamente.', ephemeral: true });
+                    return interaction.reply({ content: '⚠️ Sessão expirada. Use `/ponto` novamente.', ephemeral: true });
                 }
+            }
+
+            // --- SEGURANÇA: VERIFICAÇÃO DE DONO ---
+            const isOwner = user.id === session.userId;
+            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+
+            // Se não for o dono E não for admin, bloqueia
+            if (!isOwner && !isAdmin) {
+                return interaction.reply({ 
+                    content: `⛔ **Acesso Negado**\nEste ponto pertence a <@${session.userId}>.\nVocê não pode interagir com o ponto de outro colega.`, 
+                    ephemeral: true 
+                });
             }
 
             // Lógica de Estado
@@ -246,39 +259,48 @@ client.on('interactionCreate', async interaction => {
                 session.startTime = now;
                 session.status = '🟢 EM SERVIÇO';
                 session.logs.push(`➡️ Entrada: ${timeStr}`);
-                session.username = user.username; // Atualiza nome caso tenha mudado
+                // Se o admin iniciar pelo usuário (raro), mantém o username do dono original
+                if (isOwner) session.username = user.username;
             } 
             else if (action === 'pause') {
                 session.status = '🟡 PAUSA';
                 session.pauses.push({ start: now });
-                session.logs.push(`⏸️ Pausa: ${timeStr}`);
+                const actor = isOwner ? '' : ` (por ${user.username})`;
+                session.logs.push(`⏸️ Pausa: ${timeStr}${actor}`);
             }
             else if (action === 'resume') {
                 session.status = '🟢 EM SERVIÇO';
                 const lastPause = session.pauses[session.pauses.length - 1];
                 if (lastPause) lastPause.end = now;
-                session.logs.push(`▶️ Retorno: ${timeStr}`);
+                const actor = isOwner ? '' : ` (por ${user.username})`;
+                session.logs.push(`▶️ Retorno: ${timeStr}${actor}`);
             }
             else if (action === 'stop') {
                 session.status = '🔴 FINALIZADO';
-                session.logs.push(`⏹️ Saída: ${timeStr}`);
+                const actor = isOwner ? '' : ` (Fechado por ${user.username})`;
+                session.logs.push(`⏹️ Saída: ${timeStr}${actor}`);
                 
-                // CÁLCULO DE TEMPO DE TRABALHO
+                // CÁLCULO
                 let total = now - session.startTime;
                 let pauseTime = session.pauses.reduce((acc, p) => acc + ((p.end || now) - p.start), 0);
                 let finalTime = total - pauseTime;
-
                 if (finalTime < 0) finalTime = 0;
 
-                // SALVA NO RANKING
-                const stats = userStats.get(user.id) || { username: user.username, totalMs: 0, weeklyMs: 0, dailyMs: 0 };
+                // --- CORREÇÃO CRÍTICA DE CRÉDITOS ---
+                // O tempo deve ir para o DONO da sessão (session.userId), não para quem clicou (user.id)
+                const targetId = session.userId;
+                const targetName = session.username;
+
+                const stats = userStats.get(targetId) || { username: targetName, totalMs: 0, weeklyMs: 0, dailyMs: 0 };
                 stats.totalMs += finalTime;
                 stats.weeklyMs += finalTime;
                 stats.dailyMs += finalTime;
-                stats.username = user.username;
-                userStats.set(user.id, stats);
+                // Atualiza nome apenas se o próprio dono estiver operando para garantir nome atualizado
+                if (isOwner) stats.username = user.username; 
                 
-                sessions.delete(id); // Limpa sessão ativa
+                userStats.set(targetId, stats);
+                
+                sessions.delete(id); // Limpa da memória ativa
             }
 
             if (action !== 'stop') sessions.set(id, session);
@@ -287,9 +309,9 @@ client.on('interactionCreate', async interaction => {
             const embed = new EmbedBuilder()
                 .setTitle('🛡️ CONTROLE DE PONTO')
                 .setColor(session.status.includes('PAUSA') ? '#FEE75C' : (session.status.includes('FINAL') ? '#DA373C' : '#248046'))
-                .setThumbnail(user.displayAvatarURL())
+                .setThumbnail(isOwner ? user.displayAvatarURL() : undefined) // Mostra avatar de quem clicou se for dono, ou mantém anterior
                 .addFields(
-                    { name: 'Oficial', value: `**${user.username}**`, inline: true },
+                    { name: 'Oficial', value: `**${session.username}**`, inline: true }, // Exibe nome do DONO
                     { name: 'Protocolo', value: `#${id}`, inline: true },
                     { name: 'Status', value: '\`\`\`' + session.status + '\`\`\`', inline: false },
                     { name: 'Histórico', value: session.logs.length ? session.logs.join('\n') : '...', inline: false }
@@ -312,9 +334,8 @@ client.on('interactionCreate', async interaction => {
 
     } catch (error) {
         console.error('Erro na interação:', error);
-        // Tenta responder se ainda não respondeu
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ Erro interno ao processar comando.', ephemeral: true }).catch(() => {});
+            await interaction.reply({ content: '❌ Erro interno.', ephemeral: true }).catch(() => {});
         }
     }
 });
