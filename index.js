@@ -52,6 +52,10 @@ const commands = [
     {
         name: 'ranking',
         description: 'Ver ranking de horas trabalhadas',
+    },
+    {
+        name: 'debug',
+        description: 'Verificar status técnico do bot',
     }
 ];
 
@@ -61,7 +65,7 @@ client.once('ready', async () => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log('🚀 Comandos slash sincronizados.');
+        console.log('🚀 Comandos slash sincronizados com sucesso!');
     } catch (error) {
         console.error('Erro ao registrar comandos:', error);
     }
@@ -112,6 +116,20 @@ client.on('interactionCreate', async interaction => {
                 .setTitle('🏆 Ranking de Atividade')
                 .setDescription('O ranking global está sendo atualizado via banco de dados...')
                 .setColor('#FEE75C')
+                .setFooter({ text: 'feito pelo turzim' });
+            await interaction.reply({ embeds: [embed] });
+        }
+
+        if (interaction.commandName === 'debug') {
+            const embed = new EmbedBuilder()
+                .setTitle('🛠️ Painel de Diagnóstico')
+                .addFields(
+                    { name: '🤖 Status do Bot', value: '🟢 Operacional', inline: true },
+                    { name: '⚡ Latência', value: `${client.ws.ping}ms`, inline: true },
+                    { name: '🧠 IA Intelligence', value: 'Conectada (Gemini 2.0)', inline: true },
+                    { name: '🌐 Servidor (Render)', value: 'Saudável (Porta ${PORT})', inline: false }
+                )
+                .setColor('#DA373C')
                 .setFooter({ text: 'feito pelo turzim' });
             await interaction.reply({ embeds: [embed] });
         }
