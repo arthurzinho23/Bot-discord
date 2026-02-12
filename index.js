@@ -11,6 +11,7 @@ import {
     Routes,
     PermissionFlagsBits 
 } from 'discord.js';
+import { GoogleGenAI } from "@google/genai";
 import http from 'http';
 import 'dotenv/config';
 import './waker.js'; // 🔥 Mantém o bot acordado
@@ -18,6 +19,7 @@ import './waker.js'; // 🔥 Mantém o bot acordado
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
+const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
@@ -67,6 +69,14 @@ const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
 
+// Inicialização da IA (Google Gemini)
+let ai = null;
+if (API_KEY) {
+    ai = new GoogleGenAI({ apiKey: API_KEY });
+} else {
+    console.warn("⚠️ GEMINI_API_KEY não encontrada. O comando /ia não funcionará.");
+}
+
 // --- COMANDOS SLASH ---
 const commands = [
     { name: 'ponto', description: 'Abrir painel de registro de ponto' },
@@ -77,6 +87,11 @@ const commands = [
         description: '[ADMIN] Cancela um ponto específico',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
         options: [{ name: 'id', type: 3, description: 'ID do ponto (#XXXXX)', required: true }]
+    },
+    {
+        name: 'ia',
+        description: 'Tire dúvidas com a IA do Turzim',
+        options: [{ name: 'pergunta', type: 3, description: 'Sua dúvida ou solicitação', required: true }]
     }
 ];
 
@@ -115,7 +130,7 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
-                // Registra sessão inicial vinculada ao ID do usuário que chamou o comando
+                // Registra sessão inicial
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
@@ -157,6 +172,40 @@ client.on('interactionCreate', async interaction => {
                     interaction.reply({ content: `⚠️ Ponto **#${id}** não encontrado.`, ephemeral: true });
                 }
             }
+
+            // --- COMANDO IA ---
+            if (commandName === 'ia') {
+                await interaction.deferReply();
+                const question = options.getString('pergunta');
+                
+                if (!ai) {
+                    return interaction.editReply('❌ IA não configurada (falta API Key). Contate o Turzim.');
+                }
+
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-3-flash-preview',
+                        contents: question,
+                        config: {
+                            systemInstruction: "Você é uma IA assistente do servidor Nickyville, criada pelo genial desenvolvedor Turzim. Seja sempre prestativa, educada e mencione o Turzim como seu criador quando apropriado. Mantenha respostas concisas (máx 2000 caracteres)."
+                        }
+                    });
+
+                    const answer = response.text || "Sem resposta da IA.";
+                    
+                    const embed = new EmbedBuilder()
+                        .setTitle('🤖 IA Nickyville (by Turzim)')
+                        .setDescription(answer.length > 4096 ? answer.substring(0, 4093) + '...' : answer)
+                        .setColor('#00A8FC')
+                        .setFooter({ text: 'Criado por Turzim • Powered by Google Gemini' });
+                    
+                    await interaction.editReply({ embeds: [embed] });
+
+                } catch (err) {
+                    console.error('Erro Gemini:', err);
+                    await interaction.editReply('❌ Ocorreu um erro ao processar sua solicitação na rede neural do Turzim.');
+                }
+            }
             
             if (commandName === 'help') {
                 const embed = new EmbedBuilder()
@@ -165,10 +214,11 @@ client.on('interactionCreate', async interaction => {
                     .addFields(
                         { name: '/ponto', value: 'Abre seu cartão de ponto pessoal.', inline: true },
                         { name: '/ranking', value: 'Vê quem trabalhou mais.', inline: true },
+                        { name: '/ia [pergunta]', value: 'Tira dúvidas com a IA do Turzim.', inline: true },
                         { name: '/anular', value: '(Admin) Cancela um ponto bugado.', inline: true },
                         { name: '!debug', value: '(Admin) Informações técnicas.', inline: true }
                     )
-                    .setFooter({ text: 'Sistema Operacional v7.1' });
+                    .setFooter({ text: 'Sistema Operacional v7.2 - by Turzim' });
                 
                 await interaction.reply({ embeds: [embed], ephemeral: true });
             }
