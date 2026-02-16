@@ -23,9 +23,9 @@ const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
-// id -> { userId, username, startTime, pauses: [], logs: [], messageId: string }
+// Se o bot reiniciar, isso limpa. O fix abaixo ajuda a recuperar no Start.
 const sessions = new Map(); 
-const userStats = new Map(); // userId -> { username, totalMs, weeklyMs, dailyMs }
+const userStats = new Map();
 
 let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
@@ -79,7 +79,7 @@ const commands = [
         name: 'anular', 
         description: '[ADMIN] Gerenciar pontos ativos de um usuário',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-        options: [{ name: 'usuario', type: 6, description: 'Selecione o usuário para verificar', required: true }] // Type 6 = USER
+        options: [{ name: 'usuario', type: 6, description: 'Selecione o usuário para verificar', required: true }]
     },
     {
         name: 'ia',
@@ -90,6 +90,7 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`✅ Bot logado como ${client.user.tag}`);
+    // Limpa comandos antigos para evitar duplicação visual no cliente
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -99,10 +100,13 @@ client.once('ready', async () => {
 
 // --- EVENTOS E INTERAÇÕES ---
 client.on('interactionCreate', async interaction => {
+    // Evita processar interações de outros bots (segurança extra)
+    if (interaction.user.bot) return;
+
     try {
         checkDailyReset();
 
-        // 1. COMANDOS DE CHAT
+        // 1. COMANDOS DE CHAT (/ponto, /ranking...)
         if (interaction.isChatInputCommand()) {
             const { commandName, options, user } = interaction;
 
@@ -123,8 +127,10 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
+                // FetchReply é importante para pegar o ID da mensagem para futura anulação
                 const message = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
                 
+                // Salva na memória
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
@@ -173,7 +179,6 @@ client.on('interactionCreate', async interaction => {
                     return interaction.reply({ content: `✅ O usuário **${targetUser.username}** não possui sessões ativas no momento.`, ephemeral: true });
                 }
 
-                // Cria o Select Menu para escolher qual anular
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('anular_select')
                     .setPlaceholder('Selecione o ponto para ANULAR')
@@ -244,13 +249,10 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
             }
         }
 
-        // 2. INTERAÇÃO DE MENUS (Ranking & Anular)
+        // 2. INTERAÇÃO DE MENUS (Select Menu)
         if (interaction.isStringSelectMenu()) {
-            
-            // Lógica do /ranking
             if (interaction.customId === 'ranking_filter') {
                 const filter = interaction.values[0];
-                
                 const sorted = Array.from(userStats.entries())
                     .map(([id, stats]) => ({ ...stats, id }))
                     .filter(s => {
@@ -285,33 +287,24 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
                     });
                     embed.addFields(fields);
                 }
-
                 await interaction.update({ embeds: [embed] });
             }
 
-            // Lógica do /anular (Select Menu)
             if (interaction.customId === 'anular_select') {
                 const targetId = interaction.values[0];
                 const session = sessions.get(targetId);
 
                 if (session) {
                     sessions.delete(targetId);
-                    
-                    // Tenta apagar a mensagem original do ponto se existir ID salvo
                     if (session.messageId) {
                         try {
                             const msg = await interaction.channel.messages.fetch(session.messageId);
                             if (msg) await msg.delete();
-                        } catch(e) { /* msg antiga ou sem permissão */ }
+                        } catch(e) { /* ignore */ }
                     }
-
-                    await interaction.update({ 
-                        content: `✅ Ponto **#${targetId}** de **${session.username}** foi anulado com sucesso.`, 
-                        embeds: [], 
-                        components: [] 
-                    });
+                    await interaction.update({ content: `✅ Ponto anulado com sucesso.`, embeds: [], components: [] });
                 } else {
-                    await interaction.update({ content: `⚠️ O ponto **#${targetId}** já não existe mais.`, embeds: [], components: [] });
+                    await interaction.update({ content: `⚠️ Sessão não encontrada.`, embeds: [], components: [] });
                 }
             }
         }
@@ -325,10 +318,29 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
             
             let session = sessions.get(id);
             
+            // CORREÇÃO CRÍTICA: Se a sessão sumiu da memória (bot reiniciou), mas o usuário clicou em INICIAR,
+            // nós recriamos a sessão para não travar o usuário.
             if (!session) {
-                return interaction.reply({ content: '⚠️ Sessão expirada ou reiniciada. Por favor, use `/ponto` novamente.', ephemeral: true });
+                if (action === 'start') {
+                    // Recuperação de Sessão
+                    session = { 
+                        userId: user.id, 
+                        username: user.username, 
+                        logs: [], 
+                        pauses: [], 
+                        status: 'OFF', // Vai mudar para ON logo abaixo
+                        startTime: 0,
+                        messageId: interaction.message.id // Tenta pegar o ID da mensagem atual
+                    };
+                    sessions.set(id, session);
+                    // O código continua abaixo para processar o 'start' normalmente
+                } else {
+                    // Se for Pause/Stop e não tem sessão, aí não dá pra salvar porque não temos o tempo de início.
+                    return interaction.reply({ content: '⚠️ Sessão expirada ou não encontrada na memória (Bot reiniciou?). Por favor, use `/ponto` novamente.', ephemeral: true });
+                }
             }
 
+            // Permissão de Uso
             const isOwner = user.id === session.userId;
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
@@ -339,10 +351,12 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
                 });
             }
 
+            // Lógica dos Botões
             if (action === 'start') {
                 session.startTime = now;
                 session.status = '🟢 EM SERVIÇO';
                 session.logs.push(`➡️ Entrada: ${timeStr}`);
+                // Atualiza o nome caso tenha mudado
                 if (isOwner) session.username = user.username;
             } 
             else if (action === 'pause') {
@@ -368,21 +382,22 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
                 let finalTime = total - pauseTime;
                 if (finalTime < 0) finalTime = 0;
 
+                // Salva estatísticas
                 const targetId = session.userId;
-                const targetName = session.username;
-
-                const stats = userStats.get(targetId) || { username: targetName, totalMs: 0, weeklyMs: 0, dailyMs: 0 };
+                const stats = userStats.get(targetId) || { username: session.username, totalMs: 0, weeklyMs: 0, dailyMs: 0 };
                 stats.totalMs += finalTime;
                 stats.weeklyMs += finalTime;
                 stats.dailyMs += finalTime;
-                if (isOwner) stats.username = user.username; 
-                
+                stats.username = session.username; // Atualiza nome
                 userStats.set(targetId, stats);
-                sessions.delete(id); // Remove da memória ao finalizar
+
+                sessions.delete(id); // Limpa da memória de ativos
             }
 
+            // Salva estado atualizado se não finalizou
             if (action !== 'stop') sessions.set(id, session);
 
+            // Monta Embed Atualizada
             const embed = new EmbedBuilder()
                 .setTitle('🛡️ CONTROLE DE PONTO')
                 .setColor(session.status.includes('PAUSA') ? '#FEE75C' : (session.status.includes('FINAL') ? '#DA373C' : '#248046'))
@@ -411,20 +426,27 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
 
     } catch (error) {
         console.error('Erro na interação:', error);
+        // Tenta responder se ainda não respondeu para não deixar o bot "pensando"
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ Erro interno.', ephemeral: true }).catch(() => {});
+            try {
+                await interaction.reply({ content: '❌ Erro interno processando comando.', ephemeral: true });
+            } catch(e) {}
         }
     }
 });
 
+// --- MENÇÃO AO BOT (IA) E DEBUG ---
 client.on('messageCreate', async message => {
+    // IGNORA MENSAGENS DE BOTS (CRÍTICO PARA EVITAR DUPLICAÇÃO)
     if (message.author.bot) return;
 
+    // 1. Comando Debug
     if (message.content.toLowerCase().startsWith(PREFIX + 'debug')) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         return message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
     }
 
+    // 2. IA ao Mencionar
     if (message.mentions.users.has(client.user.id)) {
         if (!API_KEY) return message.reply("❌ IA não configurada (falta API Key).");
         
