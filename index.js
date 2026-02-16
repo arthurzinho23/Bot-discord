@@ -65,6 +65,7 @@ const checkDailyReset = () => {
     }
 };
 
+// ⚠️ IMPORTANTE: "MessageContent" deve estar ativado no Discord Developer Portal para a IA funcionar!
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
@@ -78,7 +79,7 @@ const commands = [
         name: 'anular', 
         description: '[ADMIN] Cancela um ponto específico',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-        options: [{ name: 'id', type: 3, description: 'ID do ponto (#XXXXX)', required: true }]
+        options: [{ name: 'id', type: 3, description: 'ID do ponto (ex: #5AB1Z)', required: true }]
     },
     {
         name: 'ia',
@@ -157,20 +158,26 @@ client.on('interactionCreate', async interaction => {
                     return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
                 }
                 
-                // Normaliza o ID para remover espaços e #, e joga para UPPERCASE (pois generateID cria UPPERCASE)
                 const rawId = options.getString('id') || "";
-                const id = rawId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+                // Remove tudo que não for letra ou número para evitar erros
+                const cleanId = rawId.replace(/[^a-zA-Z0-9]/g, ''); 
 
-                if (sessions.has(id)) {
-                    sessions.delete(id);
-                    await interaction.reply({ content: `✅ Ponto **#${id}** anulado/removido com sucesso.`, ephemeral: true });
+                let targetKey = null;
+                // Busca ID ignorando maiúsculas/minúsculas para garantir que ache o "bfaf" mesmo se for "BFAF"
+                for (const key of sessions.keys()) {
+                    if (key.toUpperCase() === cleanId.toUpperCase()) {
+                        targetKey = key;
+                        break;
+                    }
+                }
+
+                if (targetKey) {
+                    sessions.delete(targetKey);
+                    await interaction.reply({ content: `✅ Ponto **#${targetKey}** (Input: ${rawId}) foi anulado com sucesso.`, ephemeral: true });
                 } else {
-                    // Lista IDs ativos para ajudar o admin a encontrar o correto
                     const activeIds = Array.from(sessions.keys()).map(k => `#${k}`).join(', ');
-                    const msg = activeIds ? `IDs ativos no momento: ${activeIds}` : "Não há sessões ativas.";
-                    
                     await interaction.reply({ 
-                        content: `⚠️ Ponto **#${id}** não encontrado nas sessões ativas.\n${msg}`, 
+                        content: `❌ Sessão **#${cleanId}** não encontrada.\n📋 **Ativos:** ${activeIds || 'Nenhum'}`, 
                         ephemeral: true 
                     });
                 }
