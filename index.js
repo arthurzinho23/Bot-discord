@@ -23,7 +23,8 @@ const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
-const sessions = new Map(); // id -> { userId, username, startTime, pauses: [], logs: [] }
+// Agora a sessão armazena também o messageId
+const sessions = new Map(); // id -> { userId, username, startTime, pauses: [], logs: [], messageId: string }
 const userStats = new Map(); // userId -> { username, totalMs, weeklyMs, dailyMs }
 
 let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -65,7 +66,6 @@ const checkDailyReset = () => {
     }
 };
 
-// ⚠️ IMPORTANTE: "MessageContent" deve estar ativado no Discord Developer Portal para a IA funcionar!
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
@@ -77,9 +77,9 @@ const commands = [
     { name: 'help', description: 'Ver todos os comandos disponíveis' },
     { 
         name: 'anular', 
-        description: '[ADMIN] Cancela um ponto específico',
+        description: '[ADMIN] Cancela um ponto pelo ID da Mensagem',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-        options: [{ name: 'id', type: 3, description: 'ID do ponto (ex: #5AB1Z)', required: true }]
+        options: [{ name: 'mensagem_id', type: 3, description: 'ID da Mensagem do ponto (Botão Direito -> Copiar ID)', required: true }]
     },
     {
         name: 'ia',
@@ -123,16 +123,18 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
+                // FetchReply: true é CRUCIAL para pegar o ID da mensagem
+                const message = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
+                
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
                     logs: [], 
                     pauses: [], 
                     status: 'OFF', 
-                    startTime: 0 
+                    startTime: 0,
+                    messageId: message.id // Salva o ID da mensagem para anulação futura
                 });
-
-                await interaction.reply({ embeds: [embed], components: [row] });
             }
 
             if (commandName === 'ranking') {
@@ -158,26 +160,37 @@ client.on('interactionCreate', async interaction => {
                     return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
                 }
                 
-                const rawId = options.getString('id') || "";
-                // Remove tudo que não for letra ou número para evitar erros
-                const cleanId = rawId.replace(/[^a-zA-Z0-9]/g, ''); 
+                const targetMsgId = options.getString('mensagem_id').trim();
+                let foundSessionKey = null;
+                let foundSessionData = null;
 
-                let targetKey = null;
-                // Busca ID ignorando maiúsculas/minúsculas para garantir que ache o "bfaf" mesmo se for "BFAF"
-                for (const key of sessions.keys()) {
-                    if (key.toUpperCase() === cleanId.toUpperCase()) {
-                        targetKey = key;
+                // Procura a sessão que tem esse messageId
+                for (const [key, session] of sessions.entries()) {
+                    if (session.messageId === targetMsgId) {
+                        foundSessionKey = key;
+                        foundSessionData = session;
                         break;
                     }
                 }
 
-                if (targetKey) {
-                    sessions.delete(targetKey);
-                    await interaction.reply({ content: `✅ Ponto **#${targetKey}** (Input: ${rawId}) foi anulado com sucesso.`, ephemeral: true });
-                } else {
-                    const activeIds = Array.from(sessions.keys()).map(k => `#${k}`).join(', ');
+                if (foundSessionKey) {
+                    sessions.delete(foundSessionKey);
+                    
+                    // Tenta apagar a mensagem original para não ficar lixo no chat
+                    try {
+                        const msg = await interaction.channel.messages.fetch(targetMsgId);
+                        if (msg) await msg.delete();
+                    } catch (e) {
+                        console.log('Não foi possível apagar a mensagem original (pode ser antiga ou sem permissão).');
+                    }
+
                     await interaction.reply({ 
-                        content: `❌ Sessão **#${cleanId}** não encontrada.\n📋 **Ativos:** ${activeIds || 'Nenhum'}`, 
+                        content: `✅ Ponto do usuário **${foundSessionData.username}** (Msg: ${targetMsgId}) foi anulado e a mensagem removida.`, 
+                        ephemeral: true 
+                    });
+                } else {
+                    await interaction.reply({ 
+                        content: `⚠️ Nenhuma sessão ativa encontrada com o Message ID **${targetMsgId}**.\nCertifique-se de copiar o ID da MENSAGEM onde estão os botões.`, 
                         ephemeral: true 
                     });
                 }
@@ -224,8 +237,7 @@ client.on('interactionCreate', async interaction => {
                         { name: '/ponto', value: 'Abre ponto.', inline: true },
                         { name: '/ranking', value: 'Vê ranking.', inline: true },
                         { name: '/ia', value: 'Fala com a IA.', inline: true },
-                        { name: '/anular', value: 'Cancela ponto.', inline: true },
-                        { name: '@Bot pergunta', value: 'Responde menções.', inline: true }
+                        { name: '/anular [msg_id]', value: 'Cancela ponto pelo ID da mensagem.', inline: true }
                     );
                 
                 await interaction.reply({ embeds: [embed], ephemeral: true });
@@ -283,21 +295,10 @@ client.on('interactionCreate', async interaction => {
             
             let session = sessions.get(id);
             
-            // Verifica se a sessão existe na memória
             if (!session) {
-                if (action === 'start') {
-                    // Start cria sessão nova se o ID for válido (gerado pelo embed)
-                    session = { 
-                        userId: user.id, 
-                        username: user.username, 
-                        logs: [], 
-                        pauses: [], 
-                        status: 'OFF', 
-                        startTime: 0 
-                    };
-                } else {
-                    return interaction.reply({ content: '⚠️ Sessão expirada ou não encontrada. Inicie um novo /ponto.', ephemeral: true });
-                }
+                // Se a sessão não está na memória, tenta ver se é um start (mas no start_ a session já é criada no comando /ponto agora pra ter o messageId)
+                // Se o comando /ponto foi usado antes do reinicio, o botão pode estar órfão.
+                return interaction.reply({ content: '⚠️ Sessão expirada ou reiniciada. Por favor, use `/ponto` novamente.', ephemeral: true });
             }
 
             const isOwner = user.id === session.userId;
@@ -389,18 +390,21 @@ client.on('interactionCreate', async interaction => {
 });
 
 // --- MENÇÃO AO BOT (IA) E DEBUG ---
+// CORREÇÃO: Unificamos o evento messageCreate para evitar lógica duplicada
 client.on('messageCreate', async message => {
-    // 1. Comando Debug
-    if (message.content.toLowerCase() === PREFIX + 'debug') {
+    // Ignora mensagens de bots (incluindo ele mesmo)
+    if (message.author.bot) return;
+
+    // 1. Comando Debug (apenas Admin)
+    if (message.content.toLowerCase().startsWith(PREFIX + 'debug')) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
+        return message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
     }
 
     // 2. IA ao Mencionar (@Bot pergunta)
-    if (message.mentions.users.has(client.user.id) && !message.author.bot) {
+    if (message.mentions.users.has(client.user.id)) {
         if (!API_KEY) return message.reply("❌ IA não configurada (falta API Key).");
         
-        // Remove a menção do texto para não confundir a IA
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
         if (!prompt) return message.reply("❓ Olá! Como posso ajudar você hoje?");
 
@@ -417,7 +421,6 @@ client.on('messageCreate', async message => {
             });
             
             const replyText = response.text || "Estou sem palavras.";
-            // Discord tem limite de 2000 caracteres por mensagem
             if (replyText.length > 2000) {
                 message.reply(replyText.substring(0, 1997) + '...');
             } else {
