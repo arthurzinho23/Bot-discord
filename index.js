@@ -1,4 +1,3 @@
-
 import { 
     Client, 
     GatewayIntentBits, 
@@ -20,7 +19,6 @@ import './waker.js';
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
-// Suporta ambas as variáveis de ambiente para evitar erros
 const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
@@ -159,52 +157,54 @@ client.on('interactionCreate', async interaction => {
                     return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
                 }
                 
-                // Correção: Remove #, espaços em branco e garante maiúsculas
+                // Normaliza o ID para remover espaços e #, e joga para UPPERCASE (pois generateID cria UPPERCASE)
                 const rawId = options.getString('id') || "";
-                const id = rawId.replace(/#/g, '').trim().toUpperCase();
+                const id = rawId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
                 if (sessions.has(id)) {
                     sessions.delete(id);
-                    await interaction.reply({ content: `✅ Ponto **#${id}** anulado com sucesso pelo sistema do Turzim.`, ephemeral: true });
+                    await interaction.reply({ content: `✅ Ponto **#${id}** anulado/removido com sucesso.`, ephemeral: true });
                 } else {
-                    await interaction.reply({ content: `⚠️ Ponto **#${id}** não encontrado nas sessões ativas.`, ephemeral: true });
+                    // Lista IDs ativos para ajudar o admin a encontrar o correto
+                    const activeIds = Array.from(sessions.keys()).map(k => `#${k}`).join(', ');
+                    const msg = activeIds ? `IDs ativos no momento: ${activeIds}` : "Não há sessões ativas.";
+                    
+                    await interaction.reply({ 
+                        content: `⚠️ Ponto **#${id}** não encontrado nas sessões ativas.\n${msg}`, 
+                        ephemeral: true 
+                    });
                 }
             }
 
-            // --- COMANDO IA ---
+            // --- COMANDO IA (/ia) ---
             if (commandName === 'ia') {
                 await interaction.deferReply();
                 const question = options.getString('pergunta');
                 
-                if (!API_KEY) {
-                    return interaction.editReply('❌ IA não configurada (falta GEMINI_API_KEY no .env). Avise o Turzim.');
-                }
+                if (!API_KEY) return interaction.editReply('❌ IA não configurada (falta GEMINI_API_KEY).');
 
                 try {
-                    // Instancia a cada chamada para garantir que a chave esteja atualizada se o env mudar (em alguns ambientes)
                     const ai = new GoogleGenAI({ apiKey: API_KEY });
-                    
                     const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
                         contents: question,
                         config: {
-                            systemInstruction: "Você é uma IA assistente do servidor Nickyville. Seu criador é o Turzim (O Turzim é o Rei). Você deve ser útil, responder dúvidas sobre a cidade, regras ou bate-ponto. Sempre que possível, elogie o Turzim de forma sutil."
+                            systemInstruction: "Você é uma IA assistente do servidor Nickyville. Seu criador é o Turzim. Responda de forma curta e prestativa."
                         }
                     });
 
-                    const answer = response.text || "A IA ficou sem palavras.";
+                    const answer = response.text || "Sem resposta.";
                     
                     const embed = new EmbedBuilder()
                         .setTitle('🤖 IA Nickyville')
                         .setDescription(answer.length > 4000 ? answer.substring(0, 4000) + '...' : answer)
                         .setColor('#00A8FC')
-                        .setFooter({ text: 'Criado por Turzim • Gemini AI' });
+                        .setFooter({ text: 'Criado por Turzim' });
                     
                     await interaction.editReply({ embeds: [embed] });
-
                 } catch (err) {
-                    console.error('Erro Gemini:', err);
-                    await interaction.editReply('❌ A IA encontrou um erro. Tente novamente mais tarde.');
+                    console.error(err);
+                    await interaction.editReply('❌ Erro na IA.');
                 }
             }
             
@@ -214,13 +214,12 @@ client.on('interactionCreate', async interaction => {
                     .setColor('#00A8FC')
                     .setDescription('Sistema desenvolvido por **Turzim**.')
                     .addFields(
-                        { name: '/ponto', value: 'Abre seu cartão de ponto pessoal.', inline: true },
-                        { name: '/ranking', value: 'Vê quem trabalhou mais.', inline: true },
-                        { name: '/ia [pergunta]', value: 'Tira dúvidas com a IA.', inline: true },
-                        { name: '/anular', value: '(Admin) Cancela um ponto.', inline: true },
-                        { name: '!debug', value: '(Admin) Status do sistema.', inline: true }
-                    )
-                    .setFooter({ text: 'Sistema v7.3 Stable' });
+                        { name: '/ponto', value: 'Abre ponto.', inline: true },
+                        { name: '/ranking', value: 'Vê ranking.', inline: true },
+                        { name: '/ia', value: 'Fala com a IA.', inline: true },
+                        { name: '/anular', value: 'Cancela ponto.', inline: true },
+                        { name: '@Bot pergunta', value: 'Responde menções.', inline: true }
+                    );
                 
                 await interaction.reply({ embeds: [embed], ephemeral: true });
             }
@@ -268,7 +267,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.update({ embeds: [embed] });
         }
 
-        // 3. BOTÕES (LÓGICA PRINCIPAL)
+        // 3. BOTÕES
         if (interaction.isButton()) {
             const [action, id] = interaction.customId.split('_');
             const user = interaction.user;
@@ -277,8 +276,10 @@ client.on('interactionCreate', async interaction => {
             
             let session = sessions.get(id);
             
+            // Verifica se a sessão existe na memória
             if (!session) {
                 if (action === 'start') {
+                    // Start cria sessão nova se o ID for válido (gerado pelo embed)
                     session = { 
                         userId: user.id, 
                         username: user.username, 
@@ -288,7 +289,7 @@ client.on('interactionCreate', async interaction => {
                         startTime: 0 
                     };
                 } else {
-                    return interaction.reply({ content: '⚠️ Sessão expirada. Use `/ponto` novamente.', ephemeral: true });
+                    return interaction.reply({ content: '⚠️ Sessão expirada ou não encontrada. Inicie um novo /ponto.', ephemeral: true });
                 }
             }
 
@@ -297,7 +298,7 @@ client.on('interactionCreate', async interaction => {
 
             if (!isOwner && !isAdmin) {
                 return interaction.reply({ 
-                    content: `⛔ **Acesso Negado**\nEste ponto pertence a <@${session.userId}>.\nVocê não pode interagir com o ponto de outro colega.`, 
+                    content: `⛔ **Acesso Negado**\nEste ponto pertence a <@${session.userId}>.`, 
                     ephemeral: true 
                 });
             }
@@ -341,7 +342,7 @@ client.on('interactionCreate', async interaction => {
                 if (isOwner) stats.username = user.username; 
                 
                 userStats.set(targetId, stats);
-                sessions.delete(id);
+                sessions.delete(id); // Remove da memória ao finalizar
             }
 
             if (action !== 'stop') sessions.set(id, session);
@@ -380,11 +381,45 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// --- COMANDO DE DEBUG (ADMIN) ---
+// --- MENÇÃO AO BOT (IA) E DEBUG ---
 client.on('messageCreate', async message => {
+    // 1. Comando Debug
     if (message.content.toLowerCase() === PREFIX + 'debug') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
+    }
+
+    // 2. IA ao Mencionar (@Bot pergunta)
+    if (message.mentions.users.has(client.user.id) && !message.author.bot) {
+        if (!API_KEY) return message.reply("❌ IA não configurada (falta API Key).");
+        
+        // Remove a menção do texto para não confundir a IA
+        const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
+        if (!prompt) return message.reply("❓ Olá! Como posso ajudar você hoje?");
+
+        await message.channel.sendTyping();
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: API_KEY });
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview',
+                contents: prompt,
+                config: {
+                    systemInstruction: "Você é a IA oficial do servidor Nickyville, criada pelo genial Turzim. Responda de forma curta, direta e prestativa. Se perguntarem quem te fez, diga com orgulho que foi o Turzim."
+                }
+            });
+            
+            const replyText = response.text || "Estou sem palavras.";
+            // Discord tem limite de 2000 caracteres por mensagem
+            if (replyText.length > 2000) {
+                message.reply(replyText.substring(0, 1997) + '...');
+            } else {
+                message.reply(replyText);
+            }
+        } catch (error) {
+            console.error(error);
+            message.reply("❌ Tive um problema ao processar seu pensamento.");
+        }
     }
 });
 
