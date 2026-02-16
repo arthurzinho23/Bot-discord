@@ -1,3 +1,4 @@
+
 import { 
     Client, 
     GatewayIntentBits, 
@@ -14,11 +15,12 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import http from 'http';
 import 'dotenv/config';
-import './waker.js'; // 🔥 Mantém o bot acordado
+import './waker.js';
 
 // --- CONFIGURAÇÕES ---
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.DISCORD_TOKEN;
+// Suporta ambas as variáveis de ambiente para evitar erros
 const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
@@ -31,7 +33,7 @@ let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/S
 // --- SERVIDOR KEEP-ALIVE ---
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end(`SISTEMA NICKYVILLE ONLINE\nUptime: ${Math.floor(process.uptime())}s\nSessões Ativas: ${sessions.size}`);
+    res.end(`SISTEMA NICKYVILLE ONLINE (TURZIM EDITION)\nUptime: ${Math.floor(process.uptime())}s\nSessões Ativas: ${sessions.size}`);
 });
 server.listen(PORT, () => console.log(`🌐 Servidor rodando na porta ${PORT}`));
 
@@ -68,14 +70,6 @@ const checkDailyReset = () => {
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
 });
-
-// Inicialização da IA (Google Gemini)
-let ai = null;
-if (API_KEY) {
-    ai = new GoogleGenAI({ apiKey: API_KEY });
-} else {
-    console.warn("⚠️ GEMINI_API_KEY não encontrada. O comando /ia não funcionará.");
-}
 
 // --- COMANDOS SLASH ---
 const commands = [
@@ -123,14 +117,13 @@ client.on('interactionCreate', async interaction => {
                         { name: 'Protocolo', value: `#${sid}`, inline: true },
                         { name: 'Status', value: '🔴 AGUARDANDO', inline: true }
                     )
-                    .setFooter({ text: 'Nickyville Management' })
+                    .setFooter({ text: 'Nickyville Management • by Turzim' })
                     .setTimestamp();
 
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
-                // Registra sessão inicial
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
@@ -165,11 +158,16 @@ client.on('interactionCreate', async interaction => {
                 if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
                     return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
                 }
-                const id = options.getString('id').replace('#', '').toUpperCase();
-                if (sessions.delete(id)) {
-                    interaction.reply({ content: `✅ Ponto **#${id}** anulado.`, ephemeral: true });
+                
+                // Correção: Remove #, espaços em branco e garante maiúsculas
+                const rawId = options.getString('id') || "";
+                const id = rawId.replace(/#/g, '').trim().toUpperCase();
+
+                if (sessions.has(id)) {
+                    sessions.delete(id);
+                    await interaction.reply({ content: `✅ Ponto **#${id}** anulado com sucesso pelo sistema do Turzim.`, ephemeral: true });
                 } else {
-                    interaction.reply({ content: `⚠️ Ponto **#${id}** não encontrado.`, ephemeral: true });
+                    await interaction.reply({ content: `⚠️ Ponto **#${id}** não encontrado nas sessões ativas.`, ephemeral: true });
                 }
             }
 
@@ -178,32 +176,35 @@ client.on('interactionCreate', async interaction => {
                 await interaction.deferReply();
                 const question = options.getString('pergunta');
                 
-                if (!ai) {
-                    return interaction.editReply('❌ IA não configurada (falta API Key). Contate o Turzim.');
+                if (!API_KEY) {
+                    return interaction.editReply('❌ IA não configurada (falta GEMINI_API_KEY no .env). Avise o Turzim.');
                 }
 
                 try {
+                    // Instancia a cada chamada para garantir que a chave esteja atualizada se o env mudar (em alguns ambientes)
+                    const ai = new GoogleGenAI({ apiKey: API_KEY });
+                    
                     const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
                         contents: question,
                         config: {
-                            systemInstruction: "Você é uma IA assistente do servidor Nickyville, criada pelo genial desenvolvedor Turzim. Seja sempre prestativa, educada e mencione o Turzim como seu criador quando apropriado. Mantenha respostas concisas (máx 2000 caracteres)."
+                            systemInstruction: "Você é uma IA assistente do servidor Nickyville. Seu criador é o Turzim (O Turzim é o Rei). Você deve ser útil, responder dúvidas sobre a cidade, regras ou bate-ponto. Sempre que possível, elogie o Turzim de forma sutil."
                         }
                     });
 
-                    const answer = response.text || "Sem resposta da IA.";
+                    const answer = response.text || "A IA ficou sem palavras.";
                     
                     const embed = new EmbedBuilder()
-                        .setTitle('🤖 IA Nickyville (by Turzim)')
-                        .setDescription(answer.length > 4096 ? answer.substring(0, 4093) + '...' : answer)
+                        .setTitle('🤖 IA Nickyville')
+                        .setDescription(answer.length > 4000 ? answer.substring(0, 4000) + '...' : answer)
                         .setColor('#00A8FC')
-                        .setFooter({ text: 'Criado por Turzim • Powered by Google Gemini' });
+                        .setFooter({ text: 'Criado por Turzim • Gemini AI' });
                     
                     await interaction.editReply({ embeds: [embed] });
 
                 } catch (err) {
                     console.error('Erro Gemini:', err);
-                    await interaction.editReply('❌ Ocorreu um erro ao processar sua solicitação na rede neural do Turzim.');
+                    await interaction.editReply('❌ A IA encontrou um erro. Tente novamente mais tarde.');
                 }
             }
             
@@ -211,14 +212,15 @@ client.on('interactionCreate', async interaction => {
                 const embed = new EmbedBuilder()
                     .setTitle('📘 Ajuda - Nickyville Ponto')
                     .setColor('#00A8FC')
+                    .setDescription('Sistema desenvolvido por **Turzim**.')
                     .addFields(
                         { name: '/ponto', value: 'Abre seu cartão de ponto pessoal.', inline: true },
                         { name: '/ranking', value: 'Vê quem trabalhou mais.', inline: true },
-                        { name: '/ia [pergunta]', value: 'Tira dúvidas com a IA do Turzim.', inline: true },
-                        { name: '/anular', value: '(Admin) Cancela um ponto bugado.', inline: true },
-                        { name: '!debug', value: '(Admin) Informações técnicas.', inline: true }
+                        { name: '/ia [pergunta]', value: 'Tira dúvidas com a IA.', inline: true },
+                        { name: '/anular', value: '(Admin) Cancela um ponto.', inline: true },
+                        { name: '!debug', value: '(Admin) Status do sistema.', inline: true }
                     )
-                    .setFooter({ text: 'Sistema Operacional v7.2 - by Turzim' });
+                    .setFooter({ text: 'Sistema v7.3 Stable' });
                 
                 await interaction.reply({ embeds: [embed], ephemeral: true });
             }
@@ -275,10 +277,8 @@ client.on('interactionCreate', async interaction => {
             
             let session = sessions.get(id);
             
-            // Tratamento de sessão inexistente (bot reiniciou ou id errado)
             if (!session) {
                 if (action === 'start') {
-                    // Recria sessão para o usuário atual se for Start
                     session = { 
                         userId: user.id, 
                         username: user.username, 
@@ -292,11 +292,9 @@ client.on('interactionCreate', async interaction => {
                 }
             }
 
-            // --- SEGURANÇA: VERIFICAÇÃO DE DONO ---
             const isOwner = user.id === session.userId;
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
-            // Se não for o dono E não for admin, bloqueia
             if (!isOwner && !isAdmin) {
                 return interaction.reply({ 
                     content: `⛔ **Acesso Negado**\nEste ponto pertence a <@${session.userId}>.\nVocê não pode interagir com o ponto de outro colega.`, 
@@ -304,12 +302,10 @@ client.on('interactionCreate', async interaction => {
                 });
             }
 
-            // Lógica de Estado
             if (action === 'start') {
                 session.startTime = now;
                 session.status = '🟢 EM SERVIÇO';
                 session.logs.push(`➡️ Entrada: ${timeStr}`);
-                // Se o admin iniciar pelo usuário (raro), mantém o username do dono original
                 if (isOwner) session.username = user.username;
             } 
             else if (action === 'pause') {
@@ -330,14 +326,11 @@ client.on('interactionCreate', async interaction => {
                 const actor = isOwner ? '' : ` (Fechado por ${user.username})`;
                 session.logs.push(`⏹️ Saída: ${timeStr}${actor}`);
                 
-                // CÁLCULO
                 let total = now - session.startTime;
                 let pauseTime = session.pauses.reduce((acc, p) => acc + ((p.end || now) - p.start), 0);
                 let finalTime = total - pauseTime;
                 if (finalTime < 0) finalTime = 0;
 
-                // --- CORREÇÃO CRÍTICA DE CRÉDITOS ---
-                // O tempo deve ir para o DONO da sessão (session.userId), não para quem clicou (user.id)
                 const targetId = session.userId;
                 const targetName = session.username;
 
@@ -345,28 +338,25 @@ client.on('interactionCreate', async interaction => {
                 stats.totalMs += finalTime;
                 stats.weeklyMs += finalTime;
                 stats.dailyMs += finalTime;
-                // Atualiza nome apenas se o próprio dono estiver operando para garantir nome atualizado
                 if (isOwner) stats.username = user.username; 
                 
                 userStats.set(targetId, stats);
-                
-                sessions.delete(id); // Limpa da memória ativa
+                sessions.delete(id);
             }
 
             if (action !== 'stop') sessions.set(id, session);
 
-            // Atualiza Embed
             const embed = new EmbedBuilder()
                 .setTitle('🛡️ CONTROLE DE PONTO')
                 .setColor(session.status.includes('PAUSA') ? '#FEE75C' : (session.status.includes('FINAL') ? '#DA373C' : '#248046'))
-                .setThumbnail(isOwner ? user.displayAvatarURL() : undefined) // Mostra avatar de quem clicou se for dono, ou mantém anterior
+                .setThumbnail(isOwner ? user.displayAvatarURL() : undefined)
                 .addFields(
-                    { name: 'Oficial', value: `**${session.username}**`, inline: true }, // Exibe nome do DONO
+                    { name: 'Oficial', value: `**${session.username}**`, inline: true },
                     { name: 'Protocolo', value: `#${id}`, inline: true },
                     { name: 'Status', value: '\`\`\`' + session.status + '\`\`\`', inline: false },
                     { name: 'Histórico', value: session.logs.length ? session.logs.join('\n') : '...', inline: false }
                 )
-                .setFooter({ text: 'Nickyville Management' })
+                .setFooter({ text: 'Nickyville Management • by Turzim' })
                 .setTimestamp();
 
             const row = new ActionRowBuilder();
@@ -394,7 +384,6 @@ client.on('interactionCreate', async interaction => {
 client.on('messageCreate', async message => {
     if (message.content.toLowerCase() === PREFIX + 'debug') {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        
         message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
     }
 });
