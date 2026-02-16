@@ -23,9 +23,10 @@ const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
-// Se o bot reiniciar, isso limpa. O fix abaixo ajuda a recuperar no Start.
-const sessions = new Map(); 
-const userStats = new Map();
+const sessions = new Map(); // Sessões ATIVAS
+const userStats = new Map(); 
+// Estrutura userStats: 
+// userId -> { username, totalMs, weeklyMs, dailyMs, history: [{ id, startTime, endTime, duration, status }] }
 
 let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 
@@ -77,9 +78,9 @@ const commands = [
     { name: 'help', description: 'Ver todos os comandos disponíveis' },
     { 
         name: 'anular', 
-        description: '[ADMIN] Gerenciar pontos ativos de um usuário',
+        description: '[ADMIN] Ver e anular pontos (Ativos e Histórico)',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-        options: [{ name: 'usuario', type: 6, description: 'Selecione o usuário para verificar', required: true }]
+        options: [{ name: 'usuario', type: 6, description: 'Selecione o usuário', required: true }]
     },
     {
         name: 'ia',
@@ -90,7 +91,6 @@ const commands = [
 
 client.once('ready', async () => {
     console.log(`✅ Bot logado como ${client.user.tag}`);
-    // Limpa comandos antigos para evitar duplicação visual no cliente
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
         await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
@@ -100,13 +100,12 @@ client.once('ready', async () => {
 
 // --- EVENTOS E INTERAÇÕES ---
 client.on('interactionCreate', async interaction => {
-    // Evita processar interações de outros bots (segurança extra)
     if (interaction.user.bot) return;
 
     try {
         checkDailyReset();
 
-        // 1. COMANDOS DE CHAT (/ponto, /ranking...)
+        // 1. COMANDOS DE CHAT
         if (interaction.isChatInputCommand()) {
             const { commandName, options, user } = interaction;
 
@@ -127,10 +126,8 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
-                // FetchReply é importante para pegar o ID da mensagem para futura anulação
                 const message = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
                 
-                // Salva na memória
                 sessions.set(sid, { 
                     userId: user.id, 
                     username: user.username, 
@@ -166,47 +163,63 @@ client.on('interactionCreate', async interaction => {
                 }
 
                 const targetUser = options.getUser('usuario');
-                const userSessions = [];
-
-                // Filtra sessões do usuário alvo
+                
+                // 1. Busca sessões ativas
+                const activeSessions = [];
                 for (const [key, session] of sessions.entries()) {
                     if (session.userId === targetUser.id) {
-                        userSessions.push({ id: key, ...session });
+                        activeSessions.push({ id: key, ...session, type: 'active' });
                     }
                 }
 
-                if (userSessions.length === 0) {
-                    return interaction.reply({ content: `✅ O usuário **${targetUser.username}** não possui sessões ativas no momento.`, ephemeral: true });
+                // 2. Busca histórico (fechados)
+                const stats = userStats.get(targetUser.id);
+                const historySessions = stats && stats.history ? stats.history.map(s => ({ ...s, type: 'closed' })) : [];
+
+                // 3. Combina e ordena (Mais recente primeiro)
+                const allSessions = [...activeSessions, ...historySessions]
+                    .sort((a, b) => b.startTime - a.startTime)
+                    .slice(0, 25); // Limite do Discord
+
+                if (allSessions.length === 0) {
+                    return interaction.reply({ content: `✅ O usuário **${targetUser.username}** não possui registros (ativos ou recentes).`, ephemeral: true });
                 }
 
                 const selectMenu = new StringSelectMenuBuilder()
                     .setCustomId('anular_select')
-                    .setPlaceholder('Selecione o ponto para ANULAR')
+                    .setPlaceholder('Selecione o registro para APAGAR')
                     .addOptions(
-                        userSessions.map(s => {
-                            // FORMATAÇÃO DETALHADA PARA O MENU
+                        allSessions.map(s => {
                             const startDate = new Date(s.startTime);
                             const dateStr = startDate.toLocaleDateString('pt-BR');
                             const timeStr = startDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
                             
-                            const duration = s.startTime > 0 ? Date.now() - s.startTime : 0;
+                            let duration = 0;
+                            let emoji = '';
+                            let labelPrefix = '';
+
+                            if (s.type === 'active') {
+                                duration = s.startTime > 0 ? Date.now() - s.startTime : 0;
+                                emoji = '🟢';
+                                labelPrefix = '[ATIVO]';
+                            } else {
+                                duration = s.duration;
+                                emoji = '🔴';
+                                labelPrefix = '[FECHADO]';
+                            }
                             
                             return new StringSelectMenuOptionBuilder()
-                                .setLabel(`📅 ${dateStr} às ${timeStr}`)
-                                .setDescription(`⏳ Tempo: ${formatMs(duration)} | Status: ${s.status}`)
+                                .setLabel(`${emoji} ${dateStr} - ${timeStr}`)
+                                .setDescription(`${labelPrefix} ID: ${s.id} | Tempo: ${formatMs(duration)}`)
                                 .setValue(s.id)
-                                .setEmoji('🗑️');
                         })
                     );
 
                 const embed = new EmbedBuilder()
                     .setTitle(`🔧 Gerenciamento: ${targetUser.username}`)
-                    .setDescription(`Encontrei **${userSessions.length}** registros abertos para este usuário.
-Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
-                    .setColor('#DA373C')
-                    .addFields(
-                         { name: 'Atenção', value: 'Ao anular, o ponto será excluído e a mensagem do chat será apagada.' }
-                    );
+                    .setDescription(`Aqui estão os últimos pontos de **${targetUser.username}**.
+Selecione um para **ANULAR** (apagar e descontar horas).`)
+                    .setColor('#DA373C');
 
                 await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)], ephemeral: true });
             }
@@ -215,50 +228,42 @@ Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
                 await interaction.deferReply();
                 const question = options.getString('pergunta');
                 
-                if (!API_KEY) return interaction.editReply('❌ IA não configurada (falta GEMINI_API_KEY).');
+                if (!API_KEY) return interaction.editReply('❌ IA não configurada.');
 
                 try {
                     const ai = new GoogleGenAI({ apiKey: API_KEY });
                     const response = await ai.models.generateContent({
                         model: 'gemini-3-flash-preview',
                         contents: question,
-                        config: {
-                            systemInstruction: "Você é uma IA assistente do servidor Nickyville. Seu criador é o Turzim. Responda de forma curta e prestativa."
-                        }
+                        config: { systemInstruction: "Você é uma IA assistente do servidor Nickyville. Responda de forma curta." }
                     });
 
                     const answer = response.text || "Sem resposta.";
-                    
                     const embed = new EmbedBuilder()
                         .setTitle('🤖 IA Nickyville')
                         .setDescription(answer.length > 4000 ? answer.substring(0, 4000) + '...' : answer)
-                        .setColor('#00A8FC')
-                        .setFooter({ text: 'Criado por Turzim' });
+                        .setColor('#00A8FC');
                     
                     await interaction.editReply({ embeds: [embed] });
                 } catch (err) {
-                    console.error(err);
                     await interaction.editReply('❌ Erro na IA.');
                 }
             }
             
             if (commandName === 'help') {
                 const embed = new EmbedBuilder()
-                    .setTitle('📘 Ajuda - Nickyville Ponto')
+                    .setTitle('📘 Ajuda')
                     .setColor('#00A8FC')
-                    .setDescription('Sistema desenvolvido por **Turzim**.')
                     .addFields(
-                        { name: '/ponto', value: 'Abre ponto.', inline: true },
-                        { name: '/ranking', value: 'Vê ranking.', inline: true },
-                        { name: '/ia', value: 'Fala com a IA.', inline: true },
-                        { name: '/anular [@Usuario]', value: 'Gerencia sessões ativas de um usuário.', inline: true }
+                        { name: '/ponto', value: 'Bater ponto.', inline: true },
+                        { name: '/ranking', value: 'Ver ranking.', inline: true },
+                        { name: '/anular', value: 'Gerenciar pontos.', inline: true }
                     );
-                
                 await interaction.reply({ embeds: [embed], ephemeral: true });
             }
         }
 
-        // 2. INTERAÇÃO DE MENUS (Select Menu)
+        // 2. INTERAÇÃO DE MENUS
         if (interaction.isStringSelectMenu()) {
             if (interaction.customId === 'ranking_filter') {
                 const filter = interaction.values[0];
@@ -283,37 +288,63 @@ Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
                     .setColor('#FEE75C')
                     .setTimestamp();
 
-                if (sorted.length === 0) {
-                    embed.setDescription("⚠️ Ninguém bateu ponto neste período ainda.");
-                } else {
-                    const fields = sorted.map((s, i) => {
+                if (sorted.length === 0) embed.setDescription("⚠️ Ninguém bateu ponto neste período.");
+                else {
+                    embed.addFields(sorted.map((s, i) => {
                         const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
-                        return {
-                            name: `#${i+1} ${s.username}`,
-                            value: `⏱️ **${formatMs(val)}**\n${generateProgressBar(val, maxVal)}`,
-                            inline: false
-                        };
-                    });
-                    embed.addFields(fields);
+                        return { name: `#${i+1} ${s.username}`, value: `⏱️ **${formatMs(val)}**\n${generateProgressBar(val, maxVal)}`, inline: false };
+                    }));
                 }
                 await interaction.update({ embeds: [embed] });
             }
 
             if (interaction.customId === 'anular_select') {
                 const targetId = interaction.values[0];
-                const session = sessions.get(targetId);
 
-                if (session) {
+                // CASO 1: Anular ponto ATIVO
+                if (sessions.has(targetId)) {
+                    const session = sessions.get(targetId);
                     sessions.delete(targetId);
                     if (session.messageId) {
                         try {
                             const msg = await interaction.channel.messages.fetch(session.messageId);
                             if (msg) await msg.delete();
-                        } catch(e) { /* ignore */ }
+                        } catch(e) {}
                     }
-                    await interaction.update({ content: `✅ Ponto de **${session.username}** anulado com sucesso.`, embeds: [], components: [] });
-                } else {
-                    await interaction.update({ content: `⚠️ Sessão não encontrada ou já anulada.`, embeds: [], components: [] });
+                    return interaction.update({ content: `✅ Ponto ATIVO **#${targetId}** foi anulado.`, embeds: [], components: [] });
+                }
+
+                // CASO 2: Anular ponto FECHADO (Histórico)
+                let found = false;
+                for (const [userId, stats] of userStats.entries()) {
+                    if (!stats.history) continue;
+                    const index = stats.history.findIndex(h => h.id === targetId);
+                    
+                    if (index !== -1) {
+                        const entry = stats.history[index];
+                        
+                        // Desconta as horas
+                        stats.totalMs = Math.max(0, stats.totalMs - entry.duration);
+                        stats.weeklyMs = Math.max(0, stats.weeklyMs - entry.duration);
+                        
+                        // Só desconta do dia se o ponto for de hoje
+                        const isToday = new Date(entry.startTime).toLocaleDateString('pt-BR') === new Date().toLocaleDateString('pt-BR');
+                        if (isToday) {
+                            stats.dailyMs = Math.max(0, stats.dailyMs - entry.duration);
+                        }
+
+                        // Remove do histórico
+                        stats.history.splice(index, 1);
+                        userStats.set(userId, stats);
+                        
+                        found = true;
+                        await interaction.update({ content: `✅ Ponto FECHADO **#${targetId}** (Tempo: ${formatMs(entry.duration)}) removido e horas descontadas.`, embeds: [], components: [] });
+                        break;
+                    }
+                }
+
+                if (!found) {
+                    await interaction.update({ content: `⚠️ Registro **#${targetId}** não encontrado em nenhum lugar.`, embeds: [], components: [] });
                 }
             }
         }
@@ -327,94 +358,78 @@ Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
             
             let session = sessions.get(id);
             
-            // CORREÇÃO CRÍTICA: Se a sessão sumiu da memória (bot reiniciou), mas o usuário clicou em INICIAR,
-            // nós recriamos a sessão para não travar o usuário.
-            if (!session) {
-                if (action === 'start') {
-                    // Recuperação de Sessão
-                    session = { 
-                        userId: user.id, 
-                        username: user.username, 
-                        logs: [], 
-                        pauses: [], 
-                        status: 'OFF', // Vai mudar para ON logo abaixo
-                        startTime: 0,
-                        messageId: interaction.message.id // Tenta pegar o ID da mensagem atual
-                    };
-                    sessions.set(id, session);
-                    // O código continua abaixo para processar o 'start' normalmente
-                } else {
-                    // Se for Pause/Stop e não tem sessão, aí não dá pra salvar porque não temos o tempo de início.
-                    return interaction.reply({ content: '⚠️ Sessão expirada ou não encontrada na memória (Bot reiniciou?). Por favor, use `/ponto` novamente.', ephemeral: true });
-                }
+            // Auto-recovery
+            if (!session && action === 'start') {
+                session = { 
+                    userId: user.id, username: user.username, logs: [], pauses: [], status: 'OFF', startTime: 0, 
+                    messageId: interaction.message.id 
+                };
+                sessions.set(id, session);
+            }
+            if (!session) return interaction.reply({ content: '⚠️ Sessão expirada.', ephemeral: true });
+
+            if (user.id !== session.userId && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: '⛔ Acesso Negado.', ephemeral: true });
             }
 
-            // Permissão de Uso
-            const isOwner = user.id === session.userId;
-            const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
-
-            if (!isOwner && !isAdmin) {
-                return interaction.reply({ 
-                    content: `⛔ **Acesso Negado**\nEste ponto pertence a <@${session.userId}>.`, 
-                    ephemeral: true 
-                });
-            }
-
-            // Lógica dos Botões
             if (action === 'start') {
                 session.startTime = now;
                 session.status = '🟢 EM SERVIÇO';
                 session.logs.push(`➡️ Entrada: ${timeStr}`);
-                // Atualiza o nome caso tenha mudado
-                if (isOwner) session.username = user.username;
+                session.username = user.username;
             } 
             else if (action === 'pause') {
                 session.status = '🟡 PAUSA';
                 session.pauses.push({ start: now });
-                const actor = isOwner ? '' : ` (por ${user.username})`;
-                session.logs.push(`⏸️ Pausa: ${timeStr}${actor}`);
+                session.logs.push(`⏸️ Pausa: ${timeStr}`);
             }
             else if (action === 'resume') {
                 session.status = '🟢 EM SERVIÇO';
                 const lastPause = session.pauses[session.pauses.length - 1];
                 if (lastPause) lastPause.end = now;
-                const actor = isOwner ? '' : ` (por ${user.username})`;
-                session.logs.push(`▶️ Retorno: ${timeStr}${actor}`);
+                session.logs.push(`▶️ Retorno: ${timeStr}`);
             }
             else if (action === 'stop') {
                 session.status = '🔴 FINALIZADO';
-                const actor = isOwner ? '' : ` (Fechado por ${user.username})`;
-                session.logs.push(`⏹️ Saída: ${timeStr}${actor}`);
+                session.logs.push(`⏹️ Saída: ${timeStr}`);
                 
                 let total = now - session.startTime;
                 let pauseTime = session.pauses.reduce((acc, p) => acc + ((p.end || now) - p.start), 0);
-                let finalTime = total - pauseTime;
-                if (finalTime < 0) finalTime = 0;
+                let finalTime = Math.max(0, total - pauseTime);
 
-                // Salva estatísticas
-                const targetId = session.userId;
-                const stats = userStats.get(targetId) || { username: session.username, totalMs: 0, weeklyMs: 0, dailyMs: 0 };
+                const stats = userStats.get(session.userId) || { username: session.username, totalMs: 0, weeklyMs: 0, dailyMs: 0, history: [] };
+                if (!stats.history) stats.history = []; // Garante array
+
                 stats.totalMs += finalTime;
                 stats.weeklyMs += finalTime;
                 stats.dailyMs += finalTime;
-                stats.username = session.username; // Atualiza nome
-                userStats.set(targetId, stats);
+                stats.username = session.username;
+                
+                // Salva no histórico
+                stats.history.push({
+                    id: id,
+                    startTime: session.startTime,
+                    endTime: now,
+                    duration: finalTime,
+                    status: 'FINALIZADO'
+                });
+                // Mantém apenas os últimos 50 registros para não pesar a memória
+                if (stats.history.length > 50) stats.history.shift();
 
-                sessions.delete(id); // Limpa da memória de ativos
+                userStats.set(session.userId, stats);
+                sessions.delete(id);
             }
 
-            // Salva estado atualizado se não finalizou
             if (action !== 'stop') sessions.set(id, session);
 
-            // Monta Embed Atualizada
             const embed = new EmbedBuilder()
                 .setTitle('🛡️ CONTROLE DE PONTO')
                 .setColor(session.status.includes('PAUSA') ? '#FEE75C' : (session.status.includes('FINAL') ? '#DA373C' : '#248046'))
-                .setThumbnail(isOwner ? user.displayAvatarURL() : undefined)
+                .setThumbnail(user.displayAvatarURL())
                 .addFields(
                     { name: 'Oficial', value: `**${session.username}**`, inline: true },
                     { name: 'Protocolo', value: `#${id}`, inline: true },
-                    { name: 'Status', value: '\`\`\`' + session.status + '\`\`\`', inline: false },
+                    { name: 'Status', value: '\`' + session.status + '\`', inline: false },
                     { name: 'Histórico', value: session.logs.length ? session.logs.join('\n') : '...', inline: false }
                 )
                 .setFooter({ text: 'Nickyville Management • by Turzim' })
@@ -427,63 +442,41 @@ Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
                 } else {
                      row.addComponents(new ButtonBuilder().setCustomId(`pause_${id}`).setLabel('Pausar').setStyle(ButtonStyle.Secondary).setEmoji('⏸️'));
                 }
-                row.addComponents(new ButtonBuilder().setCustomId(`stop_${id}`).setLabel('Finalizar Plantão').setStyle(ButtonStyle.Danger).setEmoji('⏹️'));
+                row.addComponents(new ButtonBuilder().setCustomId(`stop_${id}`).setLabel('Finalizar').setStyle(ButtonStyle.Danger).setEmoji('⏹️'));
             }
 
             await interaction.update({ embeds: [embed], components: action === 'stop' ? [] : [row] });
         }
 
     } catch (error) {
-        console.error('Erro na interação:', error);
-        // Tenta responder se ainda não respondeu para não deixar o bot "pensando"
-        if (!interaction.replied && !interaction.deferred) {
-            try {
-                await interaction.reply({ content: '❌ Erro interno processando comando.', ephemeral: true });
-            } catch(e) {}
-        }
+        console.error('Erro:', error);
+        if (!interaction.replied && !interaction.deferred) await interaction.reply({ content: '❌ Erro interno.', ephemeral: true }).catch(()=>{});
     }
 });
 
-// --- MENÇÃO AO BOT (IA) E DEBUG ---
 client.on('messageCreate', async message => {
-    // IGNORA MENSAGENS DE BOTS (CRÍTICO PARA EVITAR DUPLICAÇÃO)
     if (message.author.bot) return;
 
-    // 1. Comando Debug
     if (message.content.toLowerCase().startsWith(PREFIX + 'debug')) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        return message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
+        return message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários com Stats: ${userStats.size}`);
     }
 
-    // 2. IA ao Mencionar
     if (message.mentions.users.has(client.user.id)) {
-        if (!API_KEY) return message.reply("❌ IA não configurada (falta API Key).");
-        
+        if (!API_KEY) return message.reply("❌ Falta API Key.");
         const prompt = message.content.replace(/<@!?[0-9]+>/g, '').trim();
-        if (!prompt) return message.reply("❓ Olá! Como posso ajudar você hoje?");
-
+        if (!prompt) return message.reply("❓ Olá!");
+        
         await message.channel.sendTyping();
-
         try {
             const ai = new GoogleGenAI({ apiKey: API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: prompt,
-                config: {
-                    systemInstruction: "Você é a IA oficial do servidor Nickyville, criada pelo genial Turzim. Responda de forma curta, direta e prestativa. Se perguntarem quem te fez, diga com orgulho que foi o Turzim."
-                }
+                config: { systemInstruction: "Você é a IA do Turzim." }
             });
-            
-            const replyText = response.text || "Estou sem palavras.";
-            if (replyText.length > 2000) {
-                message.reply(replyText.substring(0, 1997) + '...');
-            } else {
-                message.reply(replyText);
-            }
-        } catch (error) {
-            console.error(error);
-            message.reply("❌ Tive um problema ao processar seu pensamento.");
-        }
+            message.reply(response.text || "...");
+        } catch (e) { message.reply("❌ Erro IA."); }
     }
 });
 
