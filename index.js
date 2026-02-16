@@ -184,10 +184,16 @@ client.on('interactionCreate', async interaction => {
                     .setPlaceholder('Selecione o ponto para ANULAR')
                     .addOptions(
                         userSessions.map(s => {
+                            // FORMATAÇÃO DETALHADA PARA O MENU
+                            const startDate = new Date(s.startTime);
+                            const dateStr = startDate.toLocaleDateString('pt-BR');
+                            const timeStr = startDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                            
                             const duration = s.startTime > 0 ? Date.now() - s.startTime : 0;
+                            
                             return new StringSelectMenuOptionBuilder()
-                                .setLabel(`#${s.id} - ${s.status}`)
-                                .setDescription(`Início: ${new Date(s.startTime).toLocaleTimeString('pt-BR')} | Tempo: ${formatMs(duration)}`)
+                                .setLabel(`📅 ${dateStr} às ${timeStr}`)
+                                .setDescription(`⏳ Tempo: ${formatMs(duration)} | Status: ${s.status}`)
                                 .setValue(s.id)
                                 .setEmoji('🗑️');
                         })
@@ -195,9 +201,12 @@ client.on('interactionCreate', async interaction => {
 
                 const embed = new EmbedBuilder()
                     .setTitle(`🔧 Gerenciamento: ${targetUser.username}`)
-                    .setDescription(`Foram encontradas **${userSessions.length}** sessões ativas.
-Selecione abaixo qual deseja forçar o fechamento (anular).`)
-                    .setColor('#DA373C');
+                    .setDescription(`Encontrei **${userSessions.length}** registros abertos para este usuário.
+Selecione abaixo qual deles você deseja **ANULAR** (cancelar sem salvar).`)
+                    .setColor('#DA373C')
+                    .addFields(
+                         { name: 'Atenção', value: 'Ao anular, o ponto será excluído e a mensagem do chat será apagada.' }
+                    );
 
                 await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)], ephemeral: true });
             }
@@ -302,9 +311,9 @@ Selecione abaixo qual deseja forçar o fechamento (anular).`)
                             if (msg) await msg.delete();
                         } catch(e) { /* ignore */ }
                     }
-                    await interaction.update({ content: `✅ Ponto anulado com sucesso.`, embeds: [], components: [] });
+                    await interaction.update({ content: `✅ Ponto de **${session.username}** anulado com sucesso.`, embeds: [], components: [] });
                 } else {
-                    await interaction.update({ content: `⚠️ Sessão não encontrada.`, embeds: [], components: [] });
+                    await interaction.update({ content: `⚠️ Sessão não encontrada ou já anulada.`, embeds: [], components: [] });
                 }
             }
         }
