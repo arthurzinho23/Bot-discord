@@ -23,8 +23,8 @@ const API_KEY = process.env.GEMINI_API_KEY || process.env.API_KEY;
 const PREFIX = '!';
 
 // --- ARMAZENAMENTO (MEMÓRIA) ---
-// Agora a sessão armazena também o messageId
-const sessions = new Map(); // id -> { userId, username, startTime, pauses: [], logs: [], messageId: string }
+// id -> { userId, username, startTime, pauses: [], logs: [], messageId: string }
+const sessions = new Map(); 
 const userStats = new Map(); // userId -> { username, totalMs, weeklyMs, dailyMs }
 
 let lastDayCheck = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
@@ -77,9 +77,9 @@ const commands = [
     { name: 'help', description: 'Ver todos os comandos disponíveis' },
     { 
         name: 'anular', 
-        description: '[ADMIN] Cancela um ponto pelo ID da Mensagem',
+        description: '[ADMIN] Gerenciar pontos ativos de um usuário',
         default_member_permissions: PermissionFlagsBits.Administrator.toString(),
-        options: [{ name: 'mensagem_id', type: 3, description: 'ID da Mensagem do ponto (Botão Direito -> Copiar ID)', required: true }]
+        options: [{ name: 'usuario', type: 6, description: 'Selecione o usuário para verificar', required: true }] // Type 6 = USER
     },
     {
         name: 'ia',
@@ -123,7 +123,6 @@ client.on('interactionCreate', async interaction => {
                     new ButtonBuilder().setCustomId(`start_${sid}`).setLabel('INICIAR TURNO').setStyle(ButtonStyle.Success).setEmoji('🛡️')
                 );
                 
-                // FetchReply: true é CRUCIAL para pegar o ID da mensagem
                 const message = await interaction.reply({ embeds: [embed], components: [row], fetchReply: true });
                 
                 sessions.set(sid, { 
@@ -133,7 +132,7 @@ client.on('interactionCreate', async interaction => {
                     pauses: [], 
                     status: 'OFF', 
                     startTime: 0,
-                    messageId: message.id // Salva o ID da mensagem para anulação futura
+                    messageId: message.id
                 });
             }
 
@@ -159,44 +158,45 @@ client.on('interactionCreate', async interaction => {
                 if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
                     return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
                 }
-                
-                const targetMsgId = options.getString('mensagem_id').trim();
-                let foundSessionKey = null;
-                let foundSessionData = null;
 
-                // Procura a sessão que tem esse messageId
+                const targetUser = options.getUser('usuario');
+                const userSessions = [];
+
+                // Filtra sessões do usuário alvo
                 for (const [key, session] of sessions.entries()) {
-                    if (session.messageId === targetMsgId) {
-                        foundSessionKey = key;
-                        foundSessionData = session;
-                        break;
+                    if (session.userId === targetUser.id) {
+                        userSessions.push({ id: key, ...session });
                     }
                 }
 
-                if (foundSessionKey) {
-                    sessions.delete(foundSessionKey);
-                    
-                    // Tenta apagar a mensagem original para não ficar lixo no chat
-                    try {
-                        const msg = await interaction.channel.messages.fetch(targetMsgId);
-                        if (msg) await msg.delete();
-                    } catch (e) {
-                        console.log('Não foi possível apagar a mensagem original (pode ser antiga ou sem permissão).');
-                    }
-
-                    await interaction.reply({ 
-                        content: `✅ Ponto do usuário **${foundSessionData.username}** (Msg: ${targetMsgId}) foi anulado e a mensagem removida.`, 
-                        ephemeral: true 
-                    });
-                } else {
-                    await interaction.reply({ 
-                        content: `⚠️ Nenhuma sessão ativa encontrada com o Message ID **${targetMsgId}**.\nCertifique-se de copiar o ID da MENSAGEM onde estão os botões.`, 
-                        ephemeral: true 
-                    });
+                if (userSessions.length === 0) {
+                    return interaction.reply({ content: `✅ O usuário **${targetUser.username}** não possui sessões ativas no momento.`, ephemeral: true });
                 }
+
+                // Cria o Select Menu para escolher qual anular
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('anular_select')
+                    .setPlaceholder('Selecione o ponto para ANULAR')
+                    .addOptions(
+                        userSessions.map(s => {
+                            const duration = s.startTime > 0 ? Date.now() - s.startTime : 0;
+                            return new StringSelectMenuOptionBuilder()
+                                .setLabel(`#${s.id} - ${s.status}`)
+                                .setDescription(`Início: ${new Date(s.startTime).toLocaleTimeString('pt-BR')} | Tempo: ${formatMs(duration)}`)
+                                .setValue(s.id)
+                                .setEmoji('🗑️');
+                        })
+                    );
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`🔧 Gerenciamento: ${targetUser.username}`)
+                    .setDescription(`Foram encontradas **${userSessions.length}** sessões ativas.
+Selecione abaixo qual deseja forçar o fechamento (anular).`)
+                    .setColor('#DA373C');
+
+                await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)], ephemeral: true });
             }
 
-            // --- COMANDO IA (/ia) ---
             if (commandName === 'ia') {
                 await interaction.deferReply();
                 const question = options.getString('pergunta');
@@ -237,56 +237,86 @@ client.on('interactionCreate', async interaction => {
                         { name: '/ponto', value: 'Abre ponto.', inline: true },
                         { name: '/ranking', value: 'Vê ranking.', inline: true },
                         { name: '/ia', value: 'Fala com a IA.', inline: true },
-                        { name: '/anular [msg_id]', value: 'Cancela ponto pelo ID da mensagem.', inline: true }
+                        { name: '/anular [@Usuario]', value: 'Gerencia sessões ativas de um usuário.', inline: true }
                     );
                 
                 await interaction.reply({ embeds: [embed], ephemeral: true });
             }
         }
 
-        // 2. RANKING SELECT MENU
-        if (interaction.isStringSelectMenu() && interaction.customId === 'ranking_filter') {
-            const filter = interaction.values[0];
+        // 2. INTERAÇÃO DE MENUS (Ranking & Anular)
+        if (interaction.isStringSelectMenu()) {
             
-            const sorted = Array.from(userStats.entries())
-                .map(([id, stats]) => ({ ...stats, id }))
-                .filter(s => {
-                    const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
-                    return val > 0;
-                })
-                .sort((a, b) => {
-                    const valA = filter === 'daily' ? a.dailyMs : (filter === 'weekly' ? a.weeklyMs : a.totalMs);
-                    const valB = filter === 'daily' ? b.dailyMs : (filter === 'weekly' ? b.weeklyMs : b.totalMs);
-                    return valB - valA;
-                })
-                .slice(0, 10);
+            // Lógica do /ranking
+            if (interaction.customId === 'ranking_filter') {
+                const filter = interaction.values[0];
+                
+                const sorted = Array.from(userStats.entries())
+                    .map(([id, stats]) => ({ ...stats, id }))
+                    .filter(s => {
+                        const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
+                        return val > 0;
+                    })
+                    .sort((a, b) => {
+                        const valA = filter === 'daily' ? a.dailyMs : (filter === 'weekly' ? a.weeklyMs : a.totalMs);
+                        const valB = filter === 'daily' ? b.dailyMs : (filter === 'weekly' ? b.weeklyMs : b.totalMs);
+                        return valB - valA;
+                    })
+                    .slice(0, 10);
 
-            const titles = { total: '🏆 Ranking Geral', weekly: '📅 Ranking Semanal', daily: '☀️ Ranking Diário' };
-            const maxVal = sorted.length > 0 ? (filter === 'daily' ? sorted[0].dailyMs : (filter === 'weekly' ? sorted[0].weeklyMs : sorted[0].totalMs)) : 1;
+                const titles = { total: '🏆 Ranking Geral', weekly: '📅 Ranking Semanal', daily: '☀️ Ranking Diário' };
+                const maxVal = sorted.length > 0 ? (filter === 'daily' ? sorted[0].dailyMs : (filter === 'weekly' ? sorted[0].weeklyMs : sorted[0].totalMs)) : 1;
 
-            const embed = new EmbedBuilder()
-                .setTitle(titles[filter])
-                .setColor('#FEE75C')
-                .setTimestamp();
+                const embed = new EmbedBuilder()
+                    .setTitle(titles[filter])
+                    .setColor('#FEE75C')
+                    .setTimestamp();
 
-            if (sorted.length === 0) {
-                embed.setDescription("⚠️ Ninguém bateu ponto neste período ainda.");
-            } else {
-                const fields = sorted.map((s, i) => {
-                    const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
-                    return {
-                        name: `#${i+1} ${s.username}`,
-                        value: `⏱️ **${formatMs(val)}**\n${generateProgressBar(val, maxVal)}`,
-                        inline: false
-                    };
-                });
-                embed.addFields(fields);
+                if (sorted.length === 0) {
+                    embed.setDescription("⚠️ Ninguém bateu ponto neste período ainda.");
+                } else {
+                    const fields = sorted.map((s, i) => {
+                        const val = filter === 'daily' ? s.dailyMs : (filter === 'weekly' ? s.weeklyMs : s.totalMs);
+                        return {
+                            name: `#${i+1} ${s.username}`,
+                            value: `⏱️ **${formatMs(val)}**\n${generateProgressBar(val, maxVal)}`,
+                            inline: false
+                        };
+                    });
+                    embed.addFields(fields);
+                }
+
+                await interaction.update({ embeds: [embed] });
             }
 
-            await interaction.update({ embeds: [embed] });
+            // Lógica do /anular (Select Menu)
+            if (interaction.customId === 'anular_select') {
+                const targetId = interaction.values[0];
+                const session = sessions.get(targetId);
+
+                if (session) {
+                    sessions.delete(targetId);
+                    
+                    // Tenta apagar a mensagem original do ponto se existir ID salvo
+                    if (session.messageId) {
+                        try {
+                            const msg = await interaction.channel.messages.fetch(session.messageId);
+                            if (msg) await msg.delete();
+                        } catch(e) { /* msg antiga ou sem permissão */ }
+                    }
+
+                    await interaction.update({ 
+                        content: `✅ Ponto **#${targetId}** de **${session.username}** foi anulado com sucesso.`, 
+                        embeds: [], 
+                        components: [] 
+                    });
+                } else {
+                    await interaction.update({ content: `⚠️ O ponto **#${targetId}** já não existe mais.`, embeds: [], components: [] });
+                }
+            }
         }
 
-        // 3. BOTÕES
+        // 3. BOTÕES (Start, Pause, Stop)
         if (interaction.isButton()) {
             const [action, id] = interaction.customId.split('_');
             const user = interaction.user;
@@ -296,8 +326,6 @@ client.on('interactionCreate', async interaction => {
             let session = sessions.get(id);
             
             if (!session) {
-                // Se a sessão não está na memória, tenta ver se é um start (mas no start_ a session já é criada no comando /ponto agora pra ter o messageId)
-                // Se o comando /ponto foi usado antes do reinicio, o botão pode estar órfão.
                 return interaction.reply({ content: '⚠️ Sessão expirada ou reiniciada. Por favor, use `/ponto` novamente.', ephemeral: true });
             }
 
@@ -389,19 +417,14 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// --- MENÇÃO AO BOT (IA) E DEBUG ---
-// CORREÇÃO: Unificamos o evento messageCreate para evitar lógica duplicada
 client.on('messageCreate', async message => {
-    // Ignora mensagens de bots (incluindo ele mesmo)
     if (message.author.bot) return;
 
-    // 1. Comando Debug (apenas Admin)
     if (message.content.toLowerCase().startsWith(PREFIX + 'debug')) {
         if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
         return message.reply(`🛠️ **DEBUG**\nSessões Ativas: ${sessions.size}\nUsuários no Ranking: ${userStats.size}\nUptime: ${Math.floor(process.uptime())}s`);
     }
 
-    // 2. IA ao Mencionar (@Bot pergunta)
     if (message.mentions.users.has(client.user.id)) {
         if (!API_KEY) return message.reply("❌ IA não configurada (falta API Key).");
         
