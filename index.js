@@ -50,6 +50,24 @@ if (TOKEN) {
         console.log('ℹ️ [AUTO-FIX] Removendo prefixo "Bot " do token...');
         TOKEN = TOKEN.slice(4).trim();
     }
+
+    // Validação de Correspondência ID vs Token
+    try {
+        const tokenParts = TOKEN.split('.');
+        if (tokenParts.length > 1) {
+            const idFromToken = Buffer.from(tokenParts[0], 'base64').toString('utf-8');
+            if (idFromToken !== CLIENT_ID) {
+                console.error('\n❌ [ERRO CRÍTICO] O CLIENT_ID não corresponde ao TOKEN fornecido!');
+                console.error(`   CLIENT_ID configurado: ${CLIENT_ID}`);
+                console.error(`   ID extraído do Token:  ${idFromToken}`);
+                console.error('👉 Solução: Atualize a variável CLIENT_ID no Render com o "Application ID" correto do Portal do Desenvolvedor.\n');
+            } else {
+                console.log('✅ [CHECK] CLIENT_ID corresponde ao Token.');
+            }
+        }
+    } catch (e) {
+        console.error('[AVISO] Não foi possível validar a correspondência do token:', e.message);
+    }
 } else {
     console.error('❌ [ERRO FATAL] DISCORD_TOKEN não está definido!');
 }
@@ -116,6 +134,18 @@ app.listen(PORT, () => {
     
     // SÓ DEPOIS tenta logar o bot
     console.log('[DISCORD] Tentando conectar ao Gateway...');
+    
+    // Timeout de segurança
+    setTimeout(() => {
+        if (!client.isReady()) {
+            console.error('\n⏰ [TIMEOUT] O bot está demorando mais de 15s para conectar.');
+            console.error('   Possíveis causas:');
+            console.error('   1. Token inválido ou resetado (Gere um novo no Portal).');
+            console.error('   2. Bloqueio de IP do Render (Espere 1h ou faça redeploy).');
+            console.error('   3. Intents não salvos (Verifique se clicou em "Save Changes" no Portal).\n');
+        }
+    }, 15000);
+
     client.login(TOKEN).catch(err => {
         console.error('[ERRO] Falha ao logar no Discord:', err);
     });
