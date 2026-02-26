@@ -1,0 +1,313 @@
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, REST, Routes } = require('discord.js');
+const express = require('express');
+const axios = require('axios');
+const startWaker = require('./waker');
+require('dotenv').config();
+
+console.log('[BOOT] Iniciando sistema...');
+
+// --- DIAGNÓSTICO DE AMBIENTE ---
+console.log('[DEBUG] Variáveis de ambiente carregadas:', Object.keys(process.env).join(', '));
+
+if (process.env.DISCORD_TOKEN) {
+    console.log(`[DEBUG] DISCORD_TOKEN encontrado (Comprimento: ${process.env.DISCORD_TOKEN.length})`);
+} else {
+    console.error('[ERRO FATAL] DISCORD_TOKEN não está definido!');
+}
+
+// --- VERIFICAÇÃO DE VARIÁVEIS ---
+if (!process.env.DISCORD_TOKEN) {
+    console.error('[ERRO FATAL] O bot não pode iniciar sem o token. Verifique se o nome da variável no Render é EXATAMENTE "DISCORD_TOKEN".');
+    process.exit(1);
+}
+if (!process.env.CLIENT_ID) {
+    console.error('[ERRO FATAL] CLIENT_ID não encontrado. O bot precisa do ID da aplicação para registrar comandos.');
+    process.exit(1);
+}
+
+const TOKEN = process.env.DISCORD_TOKEN ? process.env.DISCORD_TOKEN.replace(/^"|"$/g, '').trim() : null;
+const CLIENT_ID = process.env.CLIENT_ID ? process.env.CLIENT_ID.replace(/^"|"$/g, '').trim() : null;
+const GUILD_ID = process.env.GUILD_ID;
+const EXTERNAL_API_URL = 'https://fvmp-tau.vercel.app/';
+
+// --- TRATAMENTO DE ERROS GLOBAIS ---
+process.on('unhandledRejection', error => {
+    console.error('[ERRO] Rejeição não tratada:', error);
+});
+process.on('uncaughtException', error => {
+    console.error('[ERRO] Exceção não capturada:', error);
+});
+
+// --- CLIENTE DISCORD ---
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
+
+// --- EXPRESS SERVER (Essencial para o Render não matar o processo) ---
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('SISTEMA 911 ONLINE - Bot Operacional. Logs ativos.');
+});
+
+app.get('/status', (req, res) => {
+    res.json({ 
+        status: 'online', 
+        uptime: process.uptime(),
+        discord_status: client.isReady() ? 'CONNECTED' : 'DISCONNECTED'
+    });
+});
+
+// Inicia o servidor WEB primeiro para garantir a porta
+app.listen(PORT, () => {
+    console.log(`[WEB] Servidor rodando na porta ${PORT}`);
+    
+    // Inicia o Waker
+    const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+    startWaker(APP_URL);
+    
+    // SÓ DEPOIS tenta logar o bot
+    console.log('[DISCORD] Tentando conectar ao Gateway...');
+    client.login(TOKEN).catch(err => {
+        console.error('[ERRO] Falha ao logar no Discord:', err);
+    });
+});
+
+// --- COMANDOS SLASH ---
+const commands = [
+    new SlashCommandBuilder()
+        .setName('ponto')
+        .setDescription('Abre o painel de controle de ponto'),
+    new SlashCommandBuilder()
+        .setName('ranking')
+        .setDescription('Exibe o ranking de horas')
+        .addStringOption(option =>
+            option.setName('periodo')
+                .setDescription('Período do ranking')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Total', value: 'total' },
+                    { name: 'Semanal', value: 'semanal' },
+                    { name: 'Mensal', value: 'mensal' }
+                )),
+    new SlashCommandBuilder()
+        .setName('anular')
+        .setDescription('Anula o ponto de um usuário (Admin)')
+        .addUserOption(option => 
+            option.setName('usuario')
+                .setDescription('Usuário para anular o ponto')
+                .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Mostra os comandos disponíveis'),
+    new SlashCommandBuilder()
+        .setName('status_conexao')
+        .setDescription('Verifica a conexão com o site externo')
+];
+
+// --- REGISTRO DE COMANDOS ---
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+(async () => {
+    try {
+        console.log('[COMANDOS] Iniciando registro de comandos (/).');
+        if (GUILD_ID) {
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+            console.log('[COMANDOS] Registrados na GUILD específica.');
+        } else {
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('[COMANDOS] Registrados GLOBALMENTE (pode levar até 1h para aparecer).');
+        }
+    } catch (error) {
+        console.error('[ERRO] Falha ao registrar comandos:', error);
+    }
+})();
+
+// --- EVENTOS DO BOT ---
+client.once('ready', () => {
+    console.log(`[DISCORD] Bot ONLINE! Logado como ${client.user.tag}`);
+    console.log(`[DISCORD] Estou em ${client.guilds.cache.size} servidores.`);
+});
+
+// Comando !debug
+client.on('messageCreate', async message => {
+    if (message.content === '!debug') {
+        console.log(`[CMD] !debug usado por ${message.author.tag}`);
+        
+        // Tenta registrar comandos novamente
+        let cmdStatus = '✅ Comandos (/) não atualizados';
+        try {
+            console.log('[DEBUG] Forçando atualização de comandos...');
+            if (GUILD_ID) {
+                await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+                cmdStatus = '✅ Comandos (/) atualizados na GUILD!';
+            } else {
+                await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+                cmdStatus = '✅ Comandos (/) atualizados GLOBALMENTE!';
+            }
+        } catch (error) {
+            console.error('[ERRO DEBUG] Falha ao atualizar comandos:', error);
+            cmdStatus = `❌ Falha ao atualizar comandos: ${error.message}`;
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('Debug Status & Refresh')
+            .setDescription(`✅ Bot Online\n🏓 Ping: ${client.ws.ping}ms\n🔗 API Externa: ${EXTERNAL_API_URL}\n🔄 ${cmdStatus}`);
+        
+        message.reply({ embeds: [embed] });
+    }
+});
+
+// Manipulação de Interações
+client.on('interactionCreate', async interaction => {
+    // Log de interações para debug
+    console.log(`[INTERAÇÃO] Tipo: ${interaction.type}, User: ${interaction.user.tag}`);
+
+    if (!interaction.isChatInputCommand() && !interaction.isButton()) return;
+
+    // --- COMANDO /PONTO ---
+    if (interaction.isChatInputCommand() && interaction.commandName === 'ponto') {
+        const embed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('🛂 Controle de Ponto 911')
+            .setDescription('Utilize os botões abaixo para gerenciar seu turno.')
+            .setFooter({ text: `Solicitado por ${interaction.user.tag}` });
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`iniciar_${interaction.user.id}`)
+                    .setLabel('Iniciar Ponto')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('▶️'),
+                new ButtonBuilder()
+                    .setCustomId(`pausar_${interaction.user.id}`)
+                    .setLabel('Pausar')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('⏸️'),
+                new ButtonBuilder()
+                    .setCustomId(`finalizar_${interaction.user.id}`)
+                    .setLabel('Finalizar')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('⏹️')
+            );
+
+        await interaction.reply({ embeds: [embed], components: [row] });
+    }
+
+    // --- BOTÕES DO PONTO ---
+    if (interaction.isButton() && !interaction.customId.startsWith('rank_')) {
+        const [action, userId] = interaction.customId.split('_');
+
+        if (interaction.user.id !== userId) {
+            return interaction.reply({ content: '❌ Você não pode interagir com este painel.', ephemeral: true });
+        }
+
+        try {
+            console.log(`[PONTO] Ação: ${action} por ${interaction.user.tag}`);
+            // const payload = { ... };
+            // await axios.post(`${EXTERNAL_API_URL}/api/ponto`, payload);
+            
+            let replyMsg = '';
+            if (action === 'iniciar') replyMsg = '✅ **Ponto INICIADO** com sucesso!';
+            if (action === 'pausar') replyMsg = '⏸️ **Ponto PAUSADO**.';
+            if (action === 'finalizar') replyMsg = '⏹️ **Ponto FINALIZADO**. Bom descanso!';
+
+            await interaction.reply({ content: replyMsg, ephemeral: true });
+
+        } catch (error) {
+            console.error('[ERRO] Falha ao processar ponto:', error);
+            await interaction.reply({ content: '❌ Erro ao registrar ponto. Verifique a conexão com o site.', ephemeral: true });
+        }
+    }
+
+    // --- BOTÕES DE RANKING ---
+    if (interaction.isButton() && interaction.customId.startsWith('rank_')) {
+        const periodo = interaction.customId.replace('rank_', '');
+        
+        let mockData = [];
+        if (periodo === 'total') mockData = [{ user: 'Oficial.Silva', time: '40h 30m' }, { user: 'Tenente.Souza', time: '38h 15m' }];
+        if (periodo === 'semanal') mockData = [{ user: 'Oficial.Silva', time: '10h 20m' }, { user: 'Cadete.Oliveira', time: '8h 00m' }];
+        if (periodo === 'mensal') mockData = [{ user: 'Tenente.Souza', time: '150h 00m' }, { user: 'Oficial.Silva', time: '140h 30m' }];
+
+        const embed = new EmbedBuilder()
+            .setColor(0xFFD700)
+            .setTitle(`🏆 Ranking de Horas (${periodo.toUpperCase()})`)
+            .setDescription(mockData.map((r, i) => `**${i+1}º** ${r.user}: ` + "`" + r.time + "`").join('\n'))
+            .setTimestamp();
+        
+        await interaction.update({ embeds: [embed] });
+    }
+
+    // --- COMANDO /RANKING ---
+    if (interaction.isChatInputCommand() && interaction.commandName === 'ranking') {
+        const periodo = interaction.options.getString('periodo') || 'total';
+        
+        const mockRanking = [
+            { user: 'Oficial.Silva', time: '40h 30m' },
+            { user: 'Tenente.Souza', time: '38h 15m' },
+            { user: 'Cadete.Oliveira', time: '12h 00m' }
+        ];
+
+        const embed = new EmbedBuilder()
+            .setColor(0xFFD700)
+            .setTitle(`🏆 Ranking de Horas (${periodo.toUpperCase()})`)
+            .setDescription(mockRanking.map((r, i) => `**${i+1}º** ${r.user}: ` + "`" + r.time + "`").join('\n'))
+            .setTimestamp();
+
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder().setCustomId('rank_total').setLabel('Total').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('rank_semanal').setLabel('Semanal').setStyle(ButtonStyle.Primary),
+                new ButtonBuilder().setCustomId('rank_mensal').setLabel('Mensal').setStyle(ButtonStyle.Primary)
+            );
+
+        await interaction.reply({ embeds: [embed], components: [row] });
+    }
+
+    // --- COMANDO /ANULAR ---
+    if (interaction.isChatInputCommand() && interaction.commandName === 'anular') {
+        if (!interaction.member.permissions.has('Administrator')) {
+            return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
+        }
+
+        const targetUser = interaction.options.getUser('usuario');
+        // await axios.post(`${EXTERNAL_API_URL}/api/anular`, { userId: targetUser.id });
+
+        await interaction.reply({ content: `⚠️ O ponto de **${targetUser.tag}** foi anulado.` });
+    }
+
+    // --- COMANDO /HELP ---
+    if (interaction.isChatInputCommand() && interaction.commandName === 'help') {
+        const embed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('Ajuda - Comandos 911')
+            .addFields(
+                { name: '/ponto', value: 'Abre o painel de registro de ponto.' },
+                { name: '/ranking', value: 'Vê o ranking de horas trabalhadas.' },
+                { name: '/anular @user', value: 'Anula o ponto de um usuário (Admin).' },
+                { name: '/status_conexao', value: 'Testa conexão com o sistema web.' },
+                { name: '!debug', value: 'Mostra status técnico do bot.' }
+            );
+        await interaction.reply({ embeds: [embed] });
+    }
+
+    // --- COMANDO /STATUS_CONEXAO ---
+    if (interaction.isChatInputCommand() && interaction.commandName === 'status_conexao') {
+        await interaction.deferReply();
+        try {
+            const start = Date.now();
+            await axios.get(EXTERNAL_API_URL);
+            const latency = Date.now() - start;
+            await interaction.editReply(`✅ Conexão com **${EXTERNAL_API_URL}** estabelecida! Latência: ${latency}ms`);
+        } catch (error) {
+            await interaction.editReply(`❌ Falha ao conectar com **${EXTERNAL_API_URL}**. Erro: ${error.message}`);
+        }
+    }
+});
