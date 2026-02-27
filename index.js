@@ -6,7 +6,7 @@ require('dotenv').config();
 
 console.log('[BOOT] Iniciando sistema...');
 
-// --- TRATAMENTO DE ERROS GLOBAIS (EVITA QUE O BOT DESLIGUE) ---
+// --- TRATAMENTO DE ERROS GLOBAIS ---
 process.on('unhandledRejection', (reason, promise) => {
     console.error('❌ [ERRO NÃO TRATADO] Rejeição:', reason);
 });
@@ -14,7 +14,7 @@ process.on('uncaughtException', (error) => {
     console.error('❌ [ERRO CRÍTICO] Exceção:', error);
 });
 
-// --- WEB SERVER (Express) ---
+// --- WEB SERVER ---
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -25,11 +25,6 @@ app.listen(PORT, () => {
     console.log("🌐 Server running on port " + PORT);
     const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
     startWaker(APP_URL);
-    
-    // Log periódico para mostrar que o processo está vivo
-    setInterval(() => {
-        console.log(`[STATUS] Sistema rodando há ${Math.floor(process.uptime())}s`);
-    }, 60000); // Log a cada 1 minuto
 });
 
 // --- DISCORD CLIENT ---
@@ -37,246 +32,127 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent // IMPORTANTE: Precisa estar ativado no Dev Portal
     ]
 });
 
 const EXTERNAL_API_URL = 'https://fvmp-tau.vercel.app/';
 
-// --- AUTO-DETECT CLIENT ID ---
+// --- CONFIGURAÇÃO ---
 function getClientId(token) {
     try {
         return Buffer.from(token.split('.')[0], 'base64').toString('utf-8');
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 const TOKEN = process.env.DISCORD_TOKEN?.replace(/^"|"$/g, '').trim();
 const CLIENT_ID = process.env.CLIENT_ID || (TOKEN ? getClientId(TOKEN) : null);
+const GUILD_ID = process.env.GUILD_ID; // Opcional: Para registro instantâneo
 
-if (!TOKEN) {
-    console.error("❌ [ERRO FATAL] DISCORD_TOKEN não encontrado nas variáveis de ambiente.");
-}
+if (!TOKEN) console.error("❌ [ERRO FATAL] DISCORD_TOKEN faltando!");
 
-// --- DEFINIÇÃO DOS COMANDOS (SLASH) ---
+// --- COMANDOS ---
 const commands = [
-    new SlashCommandBuilder()
-        .setName('ponto')
-        .setDescription('🛂 Abre o painel de controle de ponto'),
-    new SlashCommandBuilder()
-        .setName('ranking')
-        .setDescription('🏆 Exibe o ranking de horas')
-        .addStringOption(option =>
-            option.setName('periodo')
-                .setDescription('Período do ranking')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'Total', value: 'total' },
-                    { name: 'Semanal', value: 'semanal' },
-                    { name: 'Mensal', value: 'mensal' }
-                )),
-    new SlashCommandBuilder()
-        .setName('anular')
-        .setDescription('⚠️ Anula o ponto de um usuário (Admin)')
-        .addUserOption(option => 
-            option.setName('usuario')
-                .setDescription('Usuário alvo')
-                .setRequired(true)),
-    new SlashCommandBuilder()
-        .setName('help')
-        .setDescription('ℹ️ Mostra os comandos disponíveis'),
+    new SlashCommandBuilder().setName('ponto').setDescription('🛂 Abre o painel de ponto'),
+    new SlashCommandBuilder().setName('ranking').setDescription('🏆 Exibe o ranking')
+        .addStringOption(o => o.setName('periodo').setDescription('Período').addChoices({ name: 'Total', value: 'total' }, { name: 'Semanal', value: 'semanal' }, { name: 'Mensal', value: 'mensal' })),
+    new SlashCommandBuilder().setName('anular').setDescription('⚠️ Anula ponto (Admin)').addUserOption(o => o.setName('usuario').setDescription('Alvo').setRequired(true)),
+    new SlashCommandBuilder().setName('help').setDescription('ℹ️ Ajuda'),
 ];
 
-// --- FUNÇÃO DE REGISTRO ---
+// --- REGISTRO DE COMANDOS ---
 async function refreshCommands() {
-    if (!TOKEN || !CLIENT_ID) {
-        console.error("❌ Token ou Client ID faltando. Verifique as variáveis de ambiente.");
-        return false;
-    }
+    if (!TOKEN || !CLIENT_ID) return false;
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
-        console.log('🔄 [AUTO-UPDATE] Iniciando atualização de comandos (/) no Discord API...');
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ [AUTO-UPDATE] Comandos (/) sincronizados com sucesso!');
+        console.log('🔄 [UPDATE] Atualizando comandos...');
+        
+        // Se tiver GUILD_ID, registra lá (instantâneo). Se não, registra Global (pode demorar 1h)
+        if (GUILD_ID) {
+            await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+            console.log(`✅ [UPDATE] Comandos registrados na GUILD ${GUILD_ID} (Instantâneo)`);
+        } else {
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+            console.log('✅ [UPDATE] Comandos registrados GLOBALMENTE (Pode demorar até 1h para aparecer)');
+        }
         return true;
     } catch (error) {
-        console.error('❌ [ERRO] Falha ao atualizar comandos:', error);
+        console.error('❌ [ERRO UPDATE]', error);
         return false;
     }
 }
 
 client.once("ready", async () => {
     console.log(`✅ Logado como ${client.user.tag}`);
-    
-    // 1. Atualização Automática de Comandos
-    const success = await refreshCommands();
-
-    // 2. Notificação de Inicialização (Com proteção extra)
-    const targetId = '1467148882772234301';
-    
-    // Pequeno delay para garantir que o cache carregue
-    setTimeout(async () => {
-        try {
-            console.log(`[NOTIFICAÇÃO] Tentando enviar mensagem para ID: ${targetId}`);
-            
-            // Tenta buscar usuário primeiro (mais comum para DMs diretas)
-            let target = await client.users.fetch(targetId).catch(() => null);
-            let isUser = true;
-
-            // Se não achou usuário, tenta canal
-            if (!target) {
-                target = await client.channels.fetch(targetId).catch(() => null);
-                isUser = false;
-            }
-
-            if (!target) {
-                console.warn(`⚠️ [AVISO] Não foi possível encontrar Usuário ou Canal com ID ${targetId}. Verifique se o bot compartilha um servidor com o usuário ou se o ID está correto.`);
-                return;
-            }
-
-            const statusMsg = success 
-                ? "✅ **Bot Reiniciado e Atualizado!** Comandos (/) sincronizados. 🚀" 
-                : "⚠️ **Bot Online**, mas houve erro na sincronização de comandos.";
-
-            await target.send(statusMsg);
-            console.log(`✅ [SUCESSO] Notificação enviada para ${isUser ? 'Usuário' : 'Canal'} (${targetId})`);
-
-        } catch (error) {
-            console.error(`❌ [ERRO NOTIFICAÇÃO] Falha ao enviar mensagem: ${error.message}`);
-        }
-    }, 3000); // Espera 3 segundos após login
+    await refreshCommands();
 });
 
-// --- COMANDO !DEBUG (PREFIXO) ---
+// --- DIAGNÓSTICO DE MENSAGENS (DEBUG) ---
 client.on("messageCreate", async (message) => {
     if (message.author.bot) return;
-    
+
+    // Log para verificar se o bot está "vendo" mensagens (Testa o Intent MessageContent)
+    console.log(`[MSG] Recebida de ${message.author.tag}: ${message.content}`);
+
     if (message.content === "!debug") {
         const success = await refreshCommands();
-        
         const embed = new EmbedBuilder()
             .setColor(success ? 0x00FF00 : 0xFF0000)
-            .setTitle('🛠️ Status do Sistema & Debug')
+            .setTitle('🛠️ Debug Tool')
+            .setDescription(success ? '✅ Comandos Atualizados!' : '❌ Falha na atualização')
             .addFields(
-                { name: '🤖 Bot Status', value: 'Online e Operacional', inline: true },
-                { name: '🏓 Ping', value: `${client.ws.ping}ms`, inline: true },
-                { name: '🔄 Comandos Slash', value: success ? 'Atualizados Agora' : 'Falha na Atualização', inline: false },
-                { name: '🆔 Client ID', value: CLIENT_ID || 'Não detectado', inline: true },
-                { name: '🔗 API Externa', value: EXTERNAL_API_URL, inline: true }
-            )
-            .setFooter({ text: `Solicitado por ${message.author.tag}`, iconURL: message.author.displayAvatarURL() })
-            .setTimestamp();
-
+                { name: 'Ping', value: `${client.ws.ping}ms`, inline: true },
+                { name: 'Guild ID', value: GUILD_ID || 'Não definido (Modo Global)', inline: true },
+                { name: 'Intents', value: 'Verifique se Message Content está ativo no Portal', inline: false }
+            );
         message.reply({ embeds: [embed] });
     }
 });
 
-// --- INTERAÇÕES (SLASH E BOTÕES) ---
+// --- INTERAÇÕES ---
 client.on('interactionCreate', async interaction => {
-    // --- SLASH COMMANDS ---
+    console.log(`[INTERAÇÃO] Recebida: ${interaction.type} | Command: ${interaction.commandName || interaction.customId}`);
+
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
 
         if (commandName === 'ponto') {
-            const embed = new EmbedBuilder()
-                .setColor(0x2F3136)
-                .setTitle('🛂 Central de Ponto 911')
-                .setDescription('**Gerencie seu turno de serviço.**\n\nUtilize os botões abaixo para registrar suas atividades. Todos os registros são auditados.')
-                .addFields(
-                    { name: '📋 Instruções', value: '1. Clique em **Iniciar** ao começar.\n2. Use **Pausar** para intervalos.\n3. **Finalizar** encerra o turno.' }
-                )
-                .setThumbnail(client.user.displayAvatarURL())
-                .setFooter({ text: 'Sistema de Ponto 911', iconURL: client.user.displayAvatarURL() })
-                .setTimestamp();
-
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder().setCustomId(`iniciar_${interaction.user.id}`).setLabel('Iniciar Turno').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-                    new ButtonBuilder().setCustomId(`pausar_${interaction.user.id}`).setLabel('Pausar').setStyle(ButtonStyle.Secondary).setEmoji('⏸️'),
-                    new ButtonBuilder().setCustomId(`finalizar_${interaction.user.id}`).setLabel('Finalizar').setStyle(ButtonStyle.Danger).setEmoji('🔴')
-                );
-
-            await interaction.reply({ embeds: [embed], components: [row] });
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`iniciar_${interaction.user.id}`).setLabel('Iniciar').setStyle(ButtonStyle.Success).setEmoji('🟢'),
+                new ButtonBuilder().setCustomId(`pausar_${interaction.user.id}`).setLabel('Pausar').setStyle(ButtonStyle.Secondary).setEmoji('⏸️'),
+                new ButtonBuilder().setCustomId(`finalizar_${interaction.user.id}`).setLabel('Finalizar').setStyle(ButtonStyle.Danger).setEmoji('🔴')
+            );
+            await interaction.reply({ 
+                embeds: [new EmbedBuilder().setTitle('🛂 Ponto 911').setDescription('Gerencie seu turno abaixo.').setColor(0x2F3136)], 
+                components: [row] 
+            });
         }
 
         if (commandName === 'help') {
-            const embed = new EmbedBuilder()
-                .setColor(0x5865F2)
-                .setTitle('ℹ️ Central de Ajuda')
-                .setDescription('Lista de comandos disponíveis no sistema.')
-                .addFields(
-                    { name: '`/ponto`', value: 'Abre o painel de registro de ponto.', inline: true },
-                    { name: '`/ranking`', value: 'Visualiza o ranking de horas.', inline: true },
-                    { name: '`/anular`', value: 'Anula um registro (Apenas Admin).', inline: true },
-                    { name: '`!debug`', value: 'Ferramenta técnica e atualização de comandos.', inline: true }
-                )
-                .setThumbnail(client.user.displayAvatarURL());
-            await interaction.reply({ embeds: [embed], ephemeral: true });
+            await interaction.reply({ embeds: [new EmbedBuilder().setTitle('ℹ️ Ajuda').setDescription('Comandos: /ponto, /ranking, /anular, !debug').setColor(0x5865F2)], ephemeral: true });
         }
 
         if (commandName === 'ranking') {
-            const periodo = interaction.options.getString('periodo') || 'total';
-            // Mock data - conectar com API real depois
-            const embed = new EmbedBuilder()
-                .setColor(0xFFD700)
-                .setTitle(`🏆 Ranking de Oficiais (${periodo.toUpperCase()})`)
-                .setDescription('Top 3 oficiais com mais horas registradas.')
-                .addFields(
-                    { name: '🥇 1º Lugar', value: '**Oficial Silva**\n42h 30m', inline: false },
-                    { name: '🥈 2º Lugar', value: '**Tenente Souza**\n38h 15m', inline: false },
-                    { name: '🥉 3º Lugar', value: '**Cadete Oliveira**\n12h 00m', inline: false }
-                )
-                .setTimestamp();
-            await interaction.reply({ embeds: [embed] });
+            await interaction.reply({ embeds: [new EmbedBuilder().setTitle('🏆 Ranking').setDescription('Funcionalidade em desenvolvimento.').setColor(0xFFD700)] });
         }
-
+        
         if (commandName === 'anular') {
-            if (!interaction.member.permissions.has('Administrator')) {
-                return interaction.reply({ content: '⛔ **Acesso Negado:** Apenas administradores podem usar este comando.', ephemeral: true });
-            }
-            const target = interaction.options.getUser('usuario');
-            await interaction.reply({ content: `⚠️ **Atenção:** O último registro de ponto de ${target} foi anulado com sucesso.`, ephemeral: true });
+             if (!interaction.member.permissions.has('Administrator')) return interaction.reply({ content: '⛔ Sem permissão.', ephemeral: true });
+             await interaction.reply({ content: `⚠️ Ponto de ${interaction.options.getUser('usuario')} anulado.`, ephemeral: true });
         }
     }
 
-    // --- BUTTONS ---
     if (interaction.isButton()) {
-        if (interaction.customId.startsWith('iniciar_') || interaction.customId.startsWith('pausar_') || interaction.customId.startsWith('finalizar_')) {
-            const [action, userId] = interaction.customId.split('_');
-            
-            if (interaction.user.id !== userId) {
-                return interaction.reply({ content: '🔒 Este painel não é seu. Use `/ponto` para abrir o seu.', ephemeral: true });
-            }
+        const [action, userId] = interaction.customId.split('_');
+        if (interaction.user.id !== userId) return interaction.reply({ content: '🔒 Apenas quem abriu o painel pode usar.', ephemeral: true });
 
-            await interaction.deferReply({ ephemeral: true });
-
-            // Lógica de envio para API aqui
-            // await axios.post(...)
-
-            const actionMap = {
-                'iniciar': { text: 'iniciado', emoji: '🟢' },
-                'pausar': { text: 'pausado', emoji: '⏸️' },
-                'finalizar': { text: 'finalizado', emoji: '🔴' }
-            };
-
-            const config = actionMap[action];
-            
-            const embed = new EmbedBuilder()
-                .setColor(action === 'iniciar' ? 0x00FF00 : action === 'finalizar' ? 0xFF0000 : 0xFFA500)
-                .setTitle(`${config.emoji} Ponto ${config.text.toUpperCase()}`)
-                .setDescription(`Seu registro foi salvo com sucesso.\n\n**Horário:** ${new Date().toLocaleTimeString('pt-BR')}`)
-                .setTimestamp();
-
-            await interaction.editReply({ embeds: [embed] });
-        }
+        await interaction.deferReply({ ephemeral: true });
+        
+        // Aqui você faria o axios.post para sua API
+        
+        const msgs = { 'iniciar': '🟢 Iniciado', 'pausar': '⏸️ Pausado', 'finalizar': '🔴 Finalizado' };
+        await interaction.editReply({ content: `✅ Ponto **${msgs[action]}** com sucesso!` });
     }
 });
 
-if (TOKEN) {
-    client.login(TOKEN).catch(err => {
-        console.error('[ERRO CRÍTICO] Falha ao logar no Discord:', err);
-    });
-} else {
-    console.error('[ERRO] Não foi possível tentar login pois o TOKEN não existe.');
-}
+client.login(TOKEN);
