@@ -67,23 +67,54 @@ const commands = [
 
 // --- FUNÇÃO DE REGISTRO ---
 async function refreshCommands() {
-    if (!TOKEN || !CLIENT_ID) return console.error("❌ Token ou Client ID faltando.");
+    if (!TOKEN || !CLIENT_ID) {
+        console.error("❌ Token ou Client ID faltando. Verifique as variáveis de ambiente.");
+        return false;
+    }
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
-        console.log('🔄 Atualizando comandos (/) ...');
+        console.log('🔄 [AUTO-UPDATE] Iniciando atualização de comandos (/) no Discord API...');
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Comandos (/) atualizados com sucesso!');
+        console.log('✅ [AUTO-UPDATE] Comandos (/) sincronizados com sucesso!');
         return true;
     } catch (error) {
-        console.error('❌ Erro ao atualizar comandos:', error);
+        console.error('❌ [ERRO] Falha ao atualizar comandos:', error);
         return false;
     }
 }
 
 client.once("ready", async () => {
     console.log(`✅ Logado como ${client.user.tag}`);
-    // Tenta registrar ao iniciar para garantir
-    await refreshCommands();
+    
+    // 1. Atualização Automática de Comandos
+    const success = await refreshCommands();
+
+    // 2. Notificação de Inicialização
+    const targetId = '1467148882772234301';
+    try {
+        // Tenta buscar como canal primeiro
+        const channel = await client.channels.fetch(targetId).catch(() => null);
+        
+        const statusMsg = success 
+            ? "✅ **Bot Atualizado e Online!** Comandos sincronizados com sucesso. 🚀" 
+            : "⚠️ **Bot Online**, mas houve erro na sincronização de comandos.";
+
+        if (channel && channel.isTextBased()) {
+            await channel.send(statusMsg);
+            console.log(`[NOTIFICAÇÃO] Mensagem enviada para o canal ${channel.name}`);
+        } else {
+            // Se não for canal, tenta como usuário (DM)
+            const user = await client.users.fetch(targetId).catch(() => null);
+            if (user) {
+                await user.send(statusMsg);
+                console.log(`[NOTIFICAÇÃO] DM enviada para ${user.tag}`);
+            } else {
+                console.warn(`[AVISO] ID ${targetId} não encontrado (não é canal nem usuário acessível).`);
+            }
+        }
+    } catch (error) {
+        console.error(`[ERRO] Falha ao enviar notificação de start: ${error.message}`);
+    }
 });
 
 // --- COMANDO !DEBUG (PREFIXO) ---
